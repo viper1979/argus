@@ -198,7 +198,8 @@ interface AgentTypeAdapter {
 2. `git fetch` für den Basis-Branch, dann:
    `git worktree add --no-track -b <präfix>/<task-name> <pfad> <basis>`
 3. `git config push.autoSetupRemote true` im Worktree, Basis-Branch im Task speichern
-4. Ist ein Setup-Skript vorhanden: Es läuft **sichtbar** im ersten Terminal. Die Agent-Session startet danach.
+4. Ist ein Setup-Skript vorhanden: Es läuft **sichtbar** im ersten Terminal, mit `ARGUS_ROOT_PATH` (Haupt-Repo) und `ARGUS_WORKTREE_PATH` (Worktree) in der Umgebung. Die Agent-Session startet erst, wenn das Setup beendet ist.
+   - Endet das Setup mit Fehler (Exit-Code ≠ 0), kommt die Rückfrage **„Setup fehlgeschlagen. Agent-Session trotzdem starten?“**. Die Ausgabe des Setups bleibt im Terminal sichtbar.
 5. Agent-Session starten (siehe 5.3)
 
 ### 5.3 Agent-Session starten bzw. fortsetzen
