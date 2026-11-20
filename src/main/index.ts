@@ -3,7 +3,8 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ipcContract, ipcEventContract } from '@shared/ipc/contract';
-import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { APP_COLORS } from '@shared/theme/app-colors';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions } from 'electron';
 import { createGitClient } from './git/git-client';
 import { createProcessGitRunner } from './git/process-git-runner';
 import { createIpcEventEmitter } from './ipc/create-ipc-event-emitter';
@@ -14,6 +15,7 @@ import type { Logger } from './logging/logger';
 import { createAppStateHolder } from './persistence/app-state-holder';
 import { createStateStore } from './persistence/state-store';
 import { createProjectService } from './projects/project-service';
+import { createSettingsService } from './settings/settings-service';
 import { createTaskService } from './tasks/task-service';
 import { createNodePtySpawner } from './terminals/node-pty-spawner';
 import { closeTerminalsBeforeQuit } from './terminals/close-terminals-before-quit';
@@ -45,8 +47,16 @@ function resolveRendererUrl(): URL {
 }
 
 /**
+ * Background the window paints before and around the renderer, matching the resolved mode.
+ * @returns The page background of the light or dark mode.
+ */
+function resolveWindowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? APP_COLORS.dark.background : APP_COLORS.light.background;
+}
+
+/**
  * Creates the main window. The renderer gets no Node access and reaches the main process
- * only through the typed preload API.
+ * only through the typed preload API. Expects the stored appearance to be applied already.
  */
 function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
@@ -55,6 +65,8 @@ function createMainWindow(): BrowserWindow {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     show: false,
+    // Without it a dark start shows a white window until the renderer has painted (#22).
+    backgroundColor: resolveWindowBackgroundColor(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: PRELOAD_SCRIPT_PATH,
@@ -66,6 +78,18 @@ function createMainWindow(): BrowserWindow {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
+  });
+
+  /**
+   * Repaints the window background after Windows switched modes or the setting changed, e.g. for
+   * areas uncovered while resizing before the renderer has painted them.
+   */
+  const updateBackgroundColor = (): void => {
+    mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
+  };
+  nativeTheme.on('updated', updateBackgroundColor);
+  mainWindow.on('closed', () => {
+    nativeTheme.off('updated', updateBackgroundColor);
   });
 
   // The renderer must never open windows or navigate away from the app.
@@ -123,7 +147,7 @@ function createPathExists(logger: Logger): (path: string) => Promise<boolean> {
 }
 
 /** Wires services and IPC and opens the main window once Electron is ready. */
-function startApp(): void {
+async function startApp(): Promise<void> {
   // userData is %APPDATA%\Argus because of productName (concept, section 4).
   const stateStore = createStateStore({
     filePath: join(app.getPath('userData'), STATE_FILE_NAME),
@@ -131,6 +155,15 @@ function startApp(): void {
     now: () => new Date(),
   });
   const stateHolder = createAppStateHolder(stateStore);
+  const settingsService = createSettingsService({
+    stateHolder,
+    // Drives native parts (folder dialog, title bar, scrollbars) and, through
+    // `prefers-color-scheme`, the renderer; "system" follows Windows live.
+    applyAppearance: (appearance) => {
+      nativeTheme.themeSource = appearance;
+    },
+    logger: createConsoleLogger('settings'),
+  });
   const gitClient = createGitClient(createProcessGitRunner());
   const projectService = createProjectService({ gitClient, stateHolder, generateId: randomUUID });
   const taskService = createTaskService({
@@ -181,13 +214,15 @@ function startApp(): void {
       projectService,
       taskService,
       terminalService,
-      stateHolder,
+      settingsService,
       pickFolder,
     }),
     logger: createConsoleLogger('ipc'),
     allowedRendererUrl: resolveRendererUrl(),
   });
 
+  // Before the window exists, so its first frame already has the right background.
+  await settingsService.applyStoredAppearance();
   mainWindowReference = createMainWindow();
   mainWindowReference.on('closed', () => {
     mainWindowReference = null;

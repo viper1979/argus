@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@renderer/components/ui/dialog';
 import { Label } from '@renderer/components/ui/label';
+import { AppearanceSettings } from '@renderer/components/settings/appearance-settings';
 import { TerminalFontSettings } from '@renderer/components/settings/terminal-font-settings';
 
 /** Shown when the settings cannot be read; details are in the log. */
@@ -22,7 +23,7 @@ interface SettingsDialogProps {
   readonly onClose: () => void;
 }
 
-/** Global settings of Argus: the worktree root and the terminal font. */
+/** Global settings of Argus: the worktree root, the terminal font and the appearance. */
 export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
   const { isOpen, onClose } = props;
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -103,6 +104,11 @@ export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
               settings={settings}
               onSaved={setSettings}
             />
+          </div>
+        )}
+        {settings && (
+          <div className="grid min-w-0 gap-2 border-t border-border pt-4">
+            <AppearanceSettings settings={settings} onSaved={setSettings} />
           </div>
         )}
       </DialogContent>

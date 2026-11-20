@@ -60,53 +60,63 @@ const terminalFontSizeSchema = z
   .min(MIN_TERMINAL_FONT_SIZE, INVALID_FONT_SIZE_MESSAGE)
   .max(MAX_TERMINAL_FONT_SIZE, INVALID_FONT_SIZE_MESSAGE);
 
-/** Global settings of Argus. */
-export const settingsSchema = z.object({
+/** Values of the setting "Darstellung" (#22): follow Windows, always light or always dark. */
+export const APPEARANCES = ['system', 'light', 'dark'] as const;
+
+/** Light or dark for the whole app, including terminals and native parts (#22). */
+const appearanceSchema = z.enum(APPEARANCES, {
+  error: 'Die Darstellung muss „System“, „Hell“ oder „Dunkel“ sein.',
+});
+
+/** Value of the setting "Darstellung". */
+export type Appearance = z.infer<typeof appearanceSchema>;
+
+/** Appearance of a fresh installation and of files written before #22: follow Windows. */
+export const DEFAULT_APPEARANCE: Appearance = 'system';
+
+/**
+ * Validation of every setting without defaults. The patch schema is built from it, because
+ * `settingsSchema.partial()` would fill in the defaults and so reset every field a patch does not
+ * mention (verified with zod 4.6.7). A new setting gets one entry here and one in `settingsSchema`.
+ */
+const settingsFieldSchemas = {
   worktreeRoot: worktreeRootSchema,
+  terminalFontFamily: terminalFontFamilySchema,
+  terminalFontSize: terminalFontSizeSchema,
+  appearance: appearanceSchema,
+};
+
+/** Global settings of Argus. Every field has a default, so older `state.json` files stay readable. */
+export const settingsSchema = z.object({
+  worktreeRoot: settingsFieldSchemas.worktreeRoot.default(null),
   /** Added with #21; missing in older files. */
-  terminalFontFamily: terminalFontFamilySchema.default(DEFAULT_TERMINAL_FONT_FAMILY),
+  terminalFontFamily: settingsFieldSchemas.terminalFontFamily.default(DEFAULT_TERMINAL_FONT_FAMILY),
   /** Added with #21; missing in older files. */
-  terminalFontSize: terminalFontSizeSchema.default(DEFAULT_TERMINAL_FONT_SIZE),
+  terminalFontSize: settingsFieldSchemas.terminalFontSize.default(DEFAULT_TERMINAL_FONT_SIZE),
+  /** Added with #22; missing in older files. */
+  appearance: settingsFieldSchemas.appearance.default(DEFAULT_APPEARANCE),
 });
 
 /** Global settings of Argus. */
 export type Settings = z.infer<typeof settingsSchema>;
 
-/** Settings of a fresh installation: no worktree root yet, the default terminal font. */
-export const DEFAULT_SETTINGS: Settings = {
-  worktreeRoot: null,
-  terminalFontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
-  terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
-};
+/** Settings of a fresh installation, taken from the defaults of `settingsSchema`. */
+export const DEFAULT_SETTINGS: Settings = settingsSchema.parse({});
 
-/**
- * Change of some settings, merged into the stored ones by the main process. Built from the field
- * schemas without defaults: `settingsSchema.partial()` would fill in the defaults and so reset
- * every field the patch does not mention (verified with zod 4.6.7).
- */
-export const settingsPatchSchema = z
-  .object({
-    worktreeRoot: worktreeRootSchema,
-    terminalFontFamily: terminalFontFamilySchema,
-    terminalFontSize: terminalFontSizeSchema,
-  })
-  .partial()
-  .strict();
+/** Change of some settings, merged into the stored ones by the main process. */
+export const settingsPatchSchema = z.object(settingsFieldSchemas).partial().strict();
 
 /** Change of some settings. */
 export type SettingsPatch = z.infer<typeof settingsPatchSchema>;
 
 /**
- * Merges a patch into the stored settings. A field the patch does not mention keeps its value;
- * `worktreeRoot: null` is a value and clears the root, so `??` must not be used for it.
+ * Merges a patch into the stored settings. A field the patch does not mention (missing or
+ * `undefined`) keeps its value; `worktreeRoot: null` is a value and clears the root.
  * @param settings The stored settings.
  * @param patch Validated change from the renderer.
  * @returns New settings; the inputs are not modified.
  */
 export function applySettingsPatch(settings: Settings, patch: SettingsPatch): Settings {
-  return {
-    worktreeRoot: patch.worktreeRoot === undefined ? settings.worktreeRoot : patch.worktreeRoot,
-    terminalFontFamily: patch.terminalFontFamily ?? settings.terminalFontFamily,
-    terminalFontSize: patch.terminalFontSize ?? settings.terminalFontSize,
-  };
+  const mentionedFields = Object.entries(patch).filter(([, value]) => value !== undefined);
+  return { ...settings, ...(Object.fromEntries(mentionedFields) as Partial<Settings>) };
 }

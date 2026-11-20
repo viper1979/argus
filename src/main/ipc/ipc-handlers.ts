@@ -1,9 +1,8 @@
 import type { IpcContract } from '@shared/ipc/contract';
 import type { IpcHandlers } from '@shared/ipc/contract-types';
 import { app } from 'electron';
-import { applySettingsPatch } from '@shared/domain/settings';
-import type { AppStateHolder } from '../persistence/app-state-holder';
 import type { ProjectService } from '../projects/project-service';
+import type { SettingsService } from '../settings/settings-service';
 import type { TaskService } from '../tasks/task-service';
 import type { TerminalService } from '../terminals/terminal-service';
 
@@ -12,7 +11,7 @@ export interface IpcHandlerDependencies {
   readonly projectService: ProjectService;
   readonly taskService: TaskService;
   readonly terminalService: TerminalService;
-  readonly stateHolder: AppStateHolder;
+  readonly settingsService: SettingsService;
   /**
    * Shows the native folder picker.
    * @param title Title of the dialog.
@@ -27,7 +26,8 @@ export interface IpcHandlerDependencies {
  * @returns Handlers grouped by domain, matching {@link IpcContract}.
  */
 export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHandlers<IpcContract> {
-  const { projectService, taskService, terminalService, stateHolder, pickFolder } = dependencies;
+  const { projectService, taskService, terminalService, settingsService, pickFolder } =
+    dependencies;
 
   return {
     app: {
@@ -65,14 +65,8 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
       },
     },
     settings: {
-      get: async () => (await stateHolder.read()).settings,
-      update: async (patch) =>
-        (
-          await stateHolder.update((state) => ({
-            ...state,
-            settings: applySettingsPatch(state.settings, patch),
-          }))
-        ).settings,
+      get: () => settingsService.get(),
+      update: (patch) => settingsService.update(patch),
     },
   };
 }
