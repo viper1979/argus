@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { startHookServer, reserveClosedPort } from './hook-server.mjs';
-import { buildSettings, writeSettingsFile } from './settings.mjs';
+import { buildSettings, buildCurlCommandHookGroups, writeSettingsFile } from './settings.mjs';
 import { startPowerShellSession, quotePowerShellLiteral, waitFor, delay } from './pty-session.mjs';
 import { withTemporaryUserHook } from './user-settings.mjs';
 
@@ -39,12 +39,13 @@ const MARKER_ANSWER = '51XYZ';
  * @param {(port: number) => string[]} [options.buildUrls] Hook URLs per handler, given the server port.
  * @param {number} [options.hookPortOverride] Port to put into the URLs instead of the server port.
  * @param {number} [options.timeoutSeconds] Hook timeout.
+ * @param {(port: number) => Record<string, object[]>} [options.buildExtraHooks] Additional hook groups per event.
  */
 async function startScenario(options) {
   const {
     name, runRoot, cwd, prompt, serverMode = 'respond',
     buildUrls = (port) => [`http://127.0.0.1:${port}/hooks/claude`],
-    hookPortOverride, timeoutSeconds,
+    hookPortOverride, timeoutSeconds, buildExtraHooks = () => ({}),
   } = options;
 
   const scenarioDir = path.join(runRoot, name);
@@ -54,7 +55,7 @@ async function startScenario(options) {
   const hookPort = hookPortOverride ?? server.port;
   const settingsPath = writeSettingsFile(
     path.join(scenarioDir, 'settings.json'),
-    buildSettings({ urls: buildUrls(hookPort), timeoutSeconds }),
+    buildSettings({ urls: buildUrls(hookPort), timeoutSeconds, extraHooks: buildExtraHooks(hookPort) }),
   );
 
   const sessionId = randomUUID();
@@ -77,7 +78,26 @@ async function startScenario(options) {
   const findEvent = (eventName, predicate = () => true) =>
     server.events.find((event) => event.hookEventName === eventName && predicate(event));
 
-  return { name, scenarioDir, server, session, sessionId, hookPort, findEvent };
+  return { name, scenarioDir, server, session, sessionId, hookPort, settingsPath, findEvent };
+}
+
+/** Claude's title glyph while idle; while working it shows a spinner (◐ ◑ ◒ ◓ ...). */
+const CLAUDE_IDLE_TITLE_GLYPH = '✳';
+
+/**
+ * Measures how long after `since` the terminal title first switched to Claude's idle glyph.
+ *
+ * @param {{ titles: { at: number, title: string }[] }} session
+ * @param {number} since Timestamp of the key press.
+ * @returns {{ msToIdleTitle: number | null, titlesAfter: string[] }}
+ */
+function measureIdleTitleAfter(session, since) {
+  const titlesAfter = session.titles.filter((entry) => entry.at >= since);
+  const idleTitle = titlesAfter.find((entry) => entry.title.trimStart().startsWith(CLAUDE_IDLE_TITLE_GLYPH));
+  return {
+    msToIdleTitle: idleTitle ? idleTitle.at - since : null,
+    titlesAfter: titlesAfter.slice(0, 5).map((entry) => entry.title),
+  };
 }
 
 /**
@@ -100,7 +120,11 @@ async function finishScenario(context, findings) {
     tool: event.body.tool_name,
     reason: event.body.reason,
   }));
-  const summary = { scenario: context.name, sessionId: context.sessionId, findings, timeline };
+  const titleTimeline = context.session.titles.map((entry) => ({
+    t: entry.at - context.session.startedAt,
+    title: entry.title,
+  }));
+  const summary = { scenario: context.name, sessionId: context.sessionId, findings, timeline, titleTimeline };
   fs.writeFileSync(path.join(context.scenarioDir, 'summary.json'), JSON.stringify(summary, null, 2));
   return summary;
 }
@@ -193,6 +217,7 @@ async function runEscape(runOptions) {
   await waitFor(() => context.findEvent('UserPromptSubmit'), TURN_TIMEOUT_MS);
   await delay(4000);
   const eventCountBeforeEscape = context.server.events.length;
+  const titleBeforeEscape = context.session.titles.at(-1)?.title ?? null;
   const escapePressedAt = Date.now();
   context.session.write('\x1b');
   await delay(10_000);
@@ -200,6 +225,7 @@ async function runEscape(runOptions) {
     event: event.hookEventName,
     msAfterEscape: event.receivedAt - escapePressedAt,
   }));
+  const titleAfterEscape = measureIdleTitleAfter(context.session, escapePressedAt);
 
   // A follow-up prompt shows whether the session continues normally after the interrupt.
   await context.session.typeLine('Antworte nur mit OK.');
@@ -213,6 +239,8 @@ async function runEscape(runOptions) {
   return finishScenario(context, {
     stopBeforeEscape: context.server.events.slice(0, eventCountBeforeEscape).some((e) => e.hookEventName === 'Stop'),
     eventsWithin10sAfterEscape: eventsAfterEscape,
+    titleBeforeEscape,
+    ...titleAfterEscape,
     followUpTurnGotStop: Boolean(followUpStop),
     interruptVisibleInOutput: /Interrupted/i.test(context.session.getPlainOutput()),
   });
@@ -226,12 +254,18 @@ async function runEscapeDuringTool(runOptions) {
   const context = await startScenario({
     ...runOptions,
     name: 'escape-tool',
-    prompt: "Führe genau diesen PowerShell-Befehl mit deinem Shell-Tool aus und sonst nichts: Start-Sleep -Seconds 45; 'fertig'",
+    // Claude moves long commands to the background on its own, and blocks plain sleeps as
+    // "waiting" — so use a real long-running command and demand foreground explicitly.
+    prompt:
+      'Führe genau diesen Befehl mit deinem Shell-Tool im Vordergrund aus ' +
+      '(run_in_background false, nicht im Hintergrund) und sonst nichts: ping -n 30 127.0.0.1',
   });
   const toolStart = await waitFor(() => context.findEvent('PreToolUse'), TURN_TIMEOUT_MS);
   await delay(3000);
+  const toolStillRunningAtEscape = !context.findEvent('PostToolUse') && !context.findEvent('Stop');
   const eventCountBeforeEscape = context.server.events.length;
   const escapePressedAt = Date.now();
+  const titleBeforeEscape = context.session.titles.at(-1)?.title ?? null;
   context.session.write('\x1b');
   await delay(10_000);
   const eventsAfterEscape = context.server.events.slice(eventCountBeforeEscape).map((event) => ({
@@ -239,6 +273,7 @@ async function runEscapeDuringTool(runOptions) {
     tool: event.body.tool_name,
     msAfterEscape: event.receivedAt - escapePressedAt,
   }));
+  const titleAfterEscape = measureIdleTitleAfter(context.session, escapePressedAt);
 
   await context.session.typeLine('Antworte nur mit OK.');
   const followUpStop = await waitFor(() => context.findEvent('Stop'), TURN_TIMEOUT_MS);
@@ -247,8 +282,11 @@ async function runEscapeDuringTool(runOptions) {
 
   return finishScenario(context, {
     toolThatWasRunning: toolStart?.body.tool_name ?? null,
+    toolStillRunningAtEscape,
     permissionRequested: Boolean(context.findEvent('PermissionRequest')),
     eventsWithin10sAfterEscape: eventsAfterEscape,
+    titleBeforeEscape,
+    ...titleAfterEscape,
     followUpTurnGotStop: Boolean(followUpStop),
   });
 }
@@ -266,6 +304,7 @@ async function runCtrlC(runOptions) {
   await delay(4000);
 
   const countBeforeBusyCtrlC = context.server.events.length;
+  const titleBeforeBusyCtrlC = context.session.titles.at(-1)?.title ?? null;
   const busyCtrlCAt = Date.now();
   context.session.write('\x03');
   await delay(8000);
@@ -273,6 +312,7 @@ async function runCtrlC(runOptions) {
     event: event.hookEventName,
     msAfterCtrlC: event.receivedAt - busyCtrlCAt,
   }));
+  const titleAfterBusyCtrlC = measureIdleTitleAfter(context.session, busyCtrlCAt);
 
   const countBeforeIdleCtrlC = context.server.events.length;
   const idleCtrlCAt = Date.now();
@@ -288,6 +328,8 @@ async function runCtrlC(runOptions) {
 
   return finishScenario(context, {
     eventsWithin8sAfterBusyCtrlC: eventsAfterBusyCtrlC,
+    titleBeforeBusyCtrlC,
+    titleAfterBusyCtrlC,
     eventsAfterDoubleIdleCtrlC: eventsAfterIdleCtrlC,
     sessionEndReason: sessionEnd?.body.reason ?? null,
     powershellStillAlive: !context.session.hasExited(),
@@ -379,10 +421,68 @@ async function runNoPrompt(runOptions) {
   });
 }
 
+/**
+ * Scenario `session-start`: SessionStart via curl.exe command hooks (HTTP is not supported there).
+ * Covers start with prompt, `/clear` and `--resume` in the same PowerShell, like a user would.
+ */
+async function runSessionStart(runOptions) {
+  const context = await startScenario({
+    ...runOptions,
+    name: 'session-start',
+    prompt: 'Antworte nur mit OK.',
+    buildExtraHooks: (port) => ({ SessionStart: buildCurlCommandHookGroups(port) }),
+  });
+  /** @param {string} source */
+  const findSessionStart = (source) => context.server.events.filter(
+    (event) => event.hookEventName === 'SessionStart' && event.body.source === source,
+  );
+
+  await waitFor(() => context.findEvent('Stop'), TURN_TIMEOUT_MS);
+  const startupEvents = findSessionStart('startup');
+  const firstSessionId = context.findEvent('UserPromptSubmit')?.body.session_id;
+
+  await context.session.typeLine('/clear');
+  await waitFor(() => findSessionStart('clear').length > 0, SESSION_END_TIMEOUT_MS);
+  await delay(2000);
+  await context.session.typeLine('/exit');
+  await waitFor(() => context.server.events.filter((event) => event.hookEventName === 'SessionEnd').length >= 2, SESSION_END_TIMEOUT_MS);
+
+  // Resume the first session from the still running PowerShell (-NoExit), like Argus' "Fortsetzen".
+  await delay(2000);
+  await context.session.typeLine(
+    `claude --model haiku --settings ${quotePowerShellLiteral(context.settingsPath)} --resume ${firstSessionId}`,
+  );
+  await waitFor(() => findSessionStart('resume').length > 0, TURN_TIMEOUT_MS);
+  await delay(2000);
+  await context.session.typeLine('/exit');
+  await delay(3000);
+
+  /** @param {object[]} events */
+  const describe = (events) => events.map((event) => ({
+    path: event.url,
+    msSinceStart: event.receivedAt - context.session.startedAt,
+    sessionHeader: event.headers['x-argus-session'] === context.sessionId ? 'ok' : event.headers['x-argus-session'] ?? null,
+    sessionId: event.body.session_id,
+  }));
+  return finishScenario(context, {
+    startup: describe(startupEvents),
+    clear: describe(findSessionStart('clear')),
+    resume: describe(findSessionStart('resume')),
+    firstSessionId,
+    sessionEndReasons: context.server.events
+      .filter((event) => event.hookEventName === 'SessionEnd')
+      .map((event) => event.body.reason),
+    firstUserPromptSubmitMs: context.findEvent('UserPromptSubmit')
+      ? context.findEvent('UserPromptSubmit').receivedAt - context.session.startedAt
+      : null,
+  });
+}
+
 /** All scenarios by name, in recommended execution order. */
 export const SCENARIOS = {
   basic: runBasic,
   'no-prompt': runNoPrompt,
+  'session-start': runSessionStart,
   'subagent-foreground': (runOptions) => runSubagent(runOptions, false),
   'subagent-background': (runOptions) => runSubagent(runOptions, true),
   escape: runEscape,

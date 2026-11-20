@@ -20,7 +20,7 @@ npm install-scripts approve node-pty   # Prebuild von node-pty freigeben
 node run.mjs all                        # oder einzelne Szenarien, z. B. node run.mjs basic escape-tool
 ```
 
-Szenarien: `basic`, `no-prompt`, `subagent-foreground`, `subagent-background`, `escape`, `escape-tool`, `ctrlc`, `user-hook`, `latency`.
+Szenarien: `basic`, `no-prompt`, `session-start`, `subagent-foreground`, `subagent-background`, `escape`, `escape-tool`, `ctrlc`, `user-hook`, `latency`.
 Die Ausgabe landet in `.tmp/other/spike-hooks/<Zeitstempel>/<Szenario>/`: `events.jsonl`, `pty-output.log`, `settings.json`, `summary.json`.
 Mit `SPIKE_KEEP_CLAUDE_ENV=1` bleiben geerbte `CLAUDE*`-Variablen erhalten (Gegenprobe).
 

@@ -51,15 +51,50 @@ function buildHttpHandler({ url, timeoutSeconds }) {
  * Note: an invalid PreToolUse/PermissionRequest handler still makes Claude ignore the
  * whole settings source, so every URL here must be syntactically valid.
  *
- * @param {{ urls: string[], timeoutSeconds?: number }} options
+ * @param {{ urls: string[], timeoutSeconds?: number, extraHooks?: Record<string, object[]> }} options
+ *   `extraHooks` are appended per event, e.g. command hooks for SessionStart.
  * @returns {object}
  */
-export function buildSettings({ urls, timeoutSeconds }) {
+export function buildSettings({ urls, timeoutSeconds, extraHooks = {} }) {
   const hooks = {};
   for (const eventName of HOOK_EVENTS) {
     hooks[eventName] = urls.map((url) => ({ hooks: [buildHttpHandler({ url, timeoutSeconds })] }));
   }
+  for (const [eventName, groups] of Object.entries(extraHooks)) {
+    hooks[eventName] = [...(hooks[eventName] ?? []), ...groups];
+  }
   return { hooks };
+}
+
+/**
+ * Builds command hooks that forward the hook payload (stdin) to the hook server with curl.exe.
+ * HTTP hooks are not supported on SessionStart, so this is the only way to receive it.
+ * Two variants on different paths: explicit `shell: powershell` and Claude's default shell.
+ *
+ * @param {number} port
+ * @returns {object[]} Matcher groups for one event.
+ */
+export function buildCurlCommandHookGroups(port) {
+  // curl.exe inherits stdin from the hook process directly; `--data-binary @-` sends it unchanged.
+  const curlArguments = `-s -m 2 -H 'Content-Type: application/json' --data-binary '@-'`;
+  return [
+    {
+      hooks: [{
+        type: 'command',
+        shell: 'powershell',
+        timeout: 3,
+        command: `curl.exe ${curlArguments} -H "X-Argus-Session: $env:ARGUS_SESSION_ID" http://127.0.0.1:${port}/hooks/cmd-powershell`,
+      }],
+    },
+    {
+      hooks: [{
+        type: 'command',
+        timeout: 3,
+        // Default shell on Windows is expected to be Git Bash, hence the POSIX variable syntax.
+        command: `curl.exe ${curlArguments} -H "X-Argus-Session: $ARGUS_SESSION_ID" http://127.0.0.1:${port}/hooks/cmd-default`,
+      }],
+    },
+  ];
 }
 
 /**

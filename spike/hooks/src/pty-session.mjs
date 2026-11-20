@@ -45,12 +45,18 @@ export function startPowerShellSession({ script, cwd, env, outputLogFile }) {
   );
 
   let plainOutput = '';
+  let rawOutput = '';
+  let titleScanIndex = 0;
   let hasExited = false;
   const autoAnswers = [];
+  /** Terminal titles set via OSC 0/2, with arrival time. Claude shows its activity glyph there. */
+  const titles = [];
 
   ptyProcess.onData((data) => {
     fs.appendFileSync(outputLogFile, data);
     plainOutput += data.replace(ANSI_PATTERN, '');
+    rawOutput += data;
+    collectTitles();
     answerKnownPrompts();
   });
   ptyProcess.onExit(() => {
@@ -68,9 +74,26 @@ export function startPowerShellSession({ script, cwd, env, outputLogFile }) {
     }
   }
 
+  /**
+   * Extracts complete OSC 0/2 title sequences that arrived since the last scan.
+   * Scanning the accumulated raw output handles sequences split across data chunks.
+   */
+  function collectTitles() {
+    // OSC 0/2: ESC ] 0|2 ; <title> terminated by BEL or ST (ESC \).
+    // eslint-disable-next-line no-control-regex
+    const titlePattern = /\x1b\][02];([^\x07\x1b]*)(?:\x07|\x1b\\)/g;
+    titlePattern.lastIndex = titleScanIndex;
+    let match;
+    while ((match = titlePattern.exec(rawOutput)) !== null) {
+      titles.push({ at: Date.now(), title: match[1] });
+      titleScanIndex = titlePattern.lastIndex;
+    }
+  }
+
   return {
     startedAt,
     autoAnswers,
+    titles,
     /** @returns {string} ANSI-stripped output so far. */
     getPlainOutput: () => plainOutput,
     /** @returns {boolean} Whether the PowerShell process has exited. */
