@@ -1,4 +1,11 @@
 import { z } from 'zod';
+import {
+  addProjectResultSchema,
+  projectSchema,
+  projectSettingsSchema,
+  updateProjectResultSchema,
+} from '../domain/project';
+import { settingsSchema } from '../domain/settings';
 import type { IpcClientApi, IpcContractShape } from './contract-types';
 
 /**
@@ -13,6 +20,42 @@ export const ipcContract = {
         name: z.string().min(1),
         version: z.string().min(1),
       }),
+    },
+  },
+  dialog: {
+    /** Opens the native folder picker; `null` if the user cancelled. */
+    pickFolder: {
+      request: z.object({ title: z.string().min(1) }).strict(),
+      response: z.object({ folderPath: z.string().min(1).nullable() }),
+    },
+  },
+  project: {
+    list: {
+      request: z.object({}).strict(),
+      response: z.object({ projects: z.array(projectSchema) }),
+    },
+    add: {
+      request: z.object({ folderPath: z.string().min(1) }).strict(),
+      response: addProjectResultSchema,
+    },
+    update: {
+      request: z.object({ projectId: z.uuid(), settings: projectSettingsSchema }).strict(),
+      response: updateProjectResultSchema,
+    },
+    /** Removes the project from Argus only; nothing on disk is deleted. */
+    remove: {
+      request: z.object({ projectId: z.uuid() }).strict(),
+      response: z.object({}),
+    },
+  },
+  settings: {
+    get: {
+      request: z.object({}).strict(),
+      response: settingsSchema,
+    },
+    update: {
+      request: settingsSchema.strict(),
+      response: settingsSchema,
     },
   },
 } as const satisfies IpcContractShape;

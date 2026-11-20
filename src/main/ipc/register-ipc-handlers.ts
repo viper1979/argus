@@ -8,6 +8,7 @@ import type {
 import { toIpcChannel } from '@shared/ipc/contract-types';
 import type { z } from 'zod';
 import type { Logger } from '../logging/logger';
+import { summarizeZodIssues } from '../validation/summarize-zod-issues';
 import { IpcValidationError, type IpcMessageDirection } from './ipc-validation-error';
 import { MissingIpcHandlerError } from './missing-ipc-handler-error';
 import { UntrustedIpcSenderError } from './untrusted-ipc-sender-error';
@@ -266,7 +267,7 @@ function parseOrReject(schema: z.ZodType, value: unknown, context: ValidationCon
   log(`Rejected invalid IPC ${direction} on ${channel}`, {
     channel,
     direction,
-    issues: summarizeIssues(result.error),
+    issues: summarizeZodIssues(result.error),
   });
   throw new IpcValidationError(channel, direction);
 }
@@ -295,13 +296,4 @@ async function invokeHandler(
     });
     throw error;
   }
-}
-
-/**
- * Reduces zod issues to path and message so rejected payload values never end up in the log.
- * @param error The zod error of a failed parse.
- * @returns One `path: message` entry per issue.
- */
-function summarizeIssues(error: z.ZodError): string[] {
-  return error.issues.map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`);
 }

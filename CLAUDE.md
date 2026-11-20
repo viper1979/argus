@@ -31,6 +31,7 @@ Vor dem Planen eines Features oder bei Fragen zum Umfang: [docs/konzept.md](docs
 | Projekt | `Project` |
 | Task | `Task` |
 | Terminal | `Terminal` |
+| WorktreeRoot | `worktreeRoot` |
 | Agent-Typ | `AgentType` |
 | Agent-Session | `AgentSession` |
 | Subagent | `Subagent` |
