@@ -7,6 +7,7 @@ import {
   toTerminalFont,
   type TerminalFont,
 } from '@shared/domain/terminal-font';
+import { terminalColorSchemeFor, type TerminalColorScheme } from './terminal-color-schemes';
 import { TerminalOutputRouter } from './terminal-output-router';
 
 /**
@@ -34,6 +35,28 @@ const outputRouter = new TerminalOutputRouter();
  * stored settings are loaded, which also updates terminals created before that.
  */
 let currentFont: TerminalFont = toTerminalFont(DEFAULT_SETTINGS);
+
+/**
+ * Mode assumed until `main.tsx` reports the resolved one, which it does before the first render;
+ * so this light default is never visible in dark mode.
+ */
+const IS_DARK_BEFORE_FIRST_REPORT = false;
+
+/** Color scheme new terminals are created with; replaced on every mode change. */
+let currentColorScheme: TerminalColorScheme = terminalColorSchemeFor(IS_DARK_BEFORE_FIRST_REPORT);
+
+/**
+ * Applies a color scheme to all terminals, including open and hidden ones (#22). Only colors
+ * change, not the cell size, so no terminal needs to be fitted; xterm.js keeps the content.
+ * @param colorScheme The scheme of the resolved mode.
+ */
+export function applyTerminalColorScheme(colorScheme: TerminalColorScheme): void {
+  currentColorScheme = colorScheme;
+  for (const view of views.values()) {
+    view.terminal.options.theme = colorScheme.theme;
+    view.terminal.options.minimumContrastRatio = colorScheme.minimumContrastRatio;
+  }
+}
 
 /**
  * Applies a font to all terminals, including open ones (#21, "Sofortige Wirkung"). xterm.js
@@ -77,6 +100,8 @@ export function createTerminalView(terminalId: string): boolean {
   const terminal = new Terminal({
     fontFamily: buildTerminalFontFamily(currentFont.fontFamily),
     fontSize: currentFont.fontSize,
+    theme: currentColorScheme.theme,
+    minimumContrastRatio: currentColorScheme.minimumContrastRatio,
     scrollback: TERMINAL_SCROLLBACK_LINES,
     cursorBlink: true,
   });

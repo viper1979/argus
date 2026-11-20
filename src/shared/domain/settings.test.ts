@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { applySettingsPatch, settingsPatchSchema, settingsSchema, type Settings } from './settings';
+import {
+  applySettingsPatch,
+  DEFAULT_SETTINGS,
+  settingsPatchSchema,
+  settingsSchema,
+  type Settings,
+} from './settings';
 
 describe('applySettingsPatch', () => {
   /** Stored settings with every field off its default, so a reset would show. */
@@ -7,6 +13,7 @@ describe('applySettingsPatch', () => {
     worktreeRoot: 'D:\\Worktrees',
     terminalFontFamily: 'CaskaydiaCove Nerd Font',
     terminalFontSize: 16,
+    appearance: 'dark',
   };
 
   it('applySettingsPatch_WithFontOnly_KeepsWorktreeRoot', () => {
@@ -18,7 +25,7 @@ describe('applySettingsPatch', () => {
 
     // Assert
     expect(result).toEqual({
-      worktreeRoot: 'D:\\Worktrees',
+      ...storedSettings,
       terminalFontFamily: 'Consolas',
       terminalFontSize: 14,
     });
@@ -33,6 +40,28 @@ describe('applySettingsPatch', () => {
 
     // Assert
     expect(result).toEqual({ ...storedSettings, worktreeRoot: null });
+  });
+
+  it('applySettingsPatch_WithAppearanceOnly_ChangesOnlyAppearance', () => {
+    // Arrange
+    const patch = { appearance: 'light' as const };
+
+    // Act
+    const result = applySettingsPatch(storedSettings, patch);
+
+    // Assert
+    expect(result).toEqual({ ...storedSettings, appearance: 'light' });
+  });
+
+  it('applySettingsPatch_WithUndefinedField_KeepsStoredValue', () => {
+    // Arrange: undefined means "not mentioned", unlike null
+    const patch = { terminalFontSize: undefined, worktreeRoot: undefined };
+
+    // Act
+    const result = applySettingsPatch(storedSettings, patch);
+
+    // Assert
+    expect(result).toEqual(storedSettings);
   });
 
   it('applySettingsPatch_WithEmptyPatch_ReturnsStoredSettings', () => {
@@ -80,6 +109,37 @@ describe('settingsPatchSchema', () => {
 
     // Assert
     expect(result.success).toBe(false);
+  });
+});
+
+describe('settingsPatchSchema and settingsSchema', () => {
+  it('settingsPatchSchema_ComparedWithSettingsSchema_HasTheSameFields', () => {
+    // Arrange: a setting missing in the patch schema could never be changed by the dialog
+    const settingsFields = Object.keys(settingsSchema.shape).sort();
+
+    // Act
+    const patchFields = Object.keys(settingsPatchSchema.shape).sort();
+
+    // Assert
+    expect(patchFields).toEqual(settingsFields);
+  });
+});
+
+describe('DEFAULT_SETTINGS', () => {
+  it('DEFAULT_SETTINGS_OfFreshInstallation_HasNoRootDefaultFontAndSystemAppearance', () => {
+    // Arrange
+    const expected = {
+      worktreeRoot: null,
+      terminalFontFamily: 'Cascadia Mono',
+      terminalFontSize: 13,
+      appearance: 'system',
+    };
+
+    // Act
+    const result = DEFAULT_SETTINGS;
+
+    // Assert
+    expect(result).toEqual(expected);
   });
 });
 
@@ -195,6 +255,48 @@ describe('settingsSchema', () => {
       worktreeRoot: null,
       terminalFontFamily: 'Cascadia Mono',
       terminalFontSize: 13,
+      appearance: 'system',
     });
   });
+
+  it('settingsSchema_WithoutAppearance_DefaultsToSystem', () => {
+    // Arrange: settings as written before #22
+    const settings = { worktreeRoot: null, terminalFontFamily: 'Consolas', terminalFontSize: 14 };
+
+    // Act
+    const result = settingsSchema.parse(settings);
+
+    // Assert
+    expect(result.appearance).toBe('system');
+  });
+
+  it.each(['light', 'dark', 'system'])(
+    'settingsSchema_WithAppearance_Accepts (%s)',
+    (appearance) => {
+      // Arrange
+      const settings = { worktreeRoot: null, appearance };
+
+      // Act
+      const result = settingsSchema.safeParse(settings);
+
+      // Assert
+      expect(result.data?.appearance).toBe(appearance);
+    },
+  );
+
+  it.each(['Dunkel', 'auto', ''])(
+    'settingsSchema_WithUnknownAppearance_ReturnsGermanMessage (%s)',
+    (appearance) => {
+      // Arrange
+      const settings = { worktreeRoot: null, appearance };
+
+      // Act
+      const result = settingsSchema.safeParse(settings);
+
+      // Assert
+      expect(result.error?.issues[0]?.message).toBe(
+        'Die Darstellung muss „System“, „Hell“ oder „Dunkel“ sein.',
+      );
+    },
+  );
 });

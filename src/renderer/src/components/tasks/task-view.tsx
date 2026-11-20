@@ -133,12 +133,12 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
           {actionError}
         </p>
       )}
-      <div className="min-h-0 flex-1 bg-black p-1">
+      <div className="min-h-0 flex-1 bg-background p-1">
         {activeTerminalId ? (
           // The key remounts the pane per terminal, so the previous one is detached cleanly.
           <TerminalPane key={activeTerminalId} terminalId={activeTerminalId} />
         ) : (
-          <p className="flex h-full items-center justify-center text-sm text-neutral-400">
+          <p className="flex h-full items-center justify-center text-sm text-muted-foreground">
             Noch kein Terminal. Mit „+“ ein neues öffnen.
           </p>
         )}
