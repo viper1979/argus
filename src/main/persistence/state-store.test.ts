@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '@shared/domain/settings';
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,7 +22,7 @@ const STATE_WITH_PROJECT: AppState = {
       setupScript: null,
     },
   ],
-  settings: { worktreeRoot: 'D:\\Worktrees' },
+  settings: { ...DEFAULT_SETTINGS, worktreeRoot: 'D:\\Worktrees' },
   tasks: [],
   consumedTaskNames: [],
 };

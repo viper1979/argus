@@ -1,6 +1,12 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
+import { DEFAULT_SETTINGS } from '@shared/domain/settings';
+import {
+  buildTerminalFontFamily,
+  toTerminalFont,
+  type TerminalFont,
+} from '@shared/domain/terminal-font';
 import { TerminalOutputRouter } from './terminal-output-router';
 
 /**
@@ -17,15 +23,36 @@ interface TerminalView {
   isOpened: boolean;
 }
 
-/** Font of the terminals: the Windows Terminal default with fallbacks present on every Windows. */
-const TERMINAL_FONT_FAMILY = "'Cascadia Mono', Consolas, 'Courier New', monospace";
-const TERMINAL_FONT_SIZE = 13;
-
 /** Lines kept per terminal when scrolling back. */
 const TERMINAL_SCROLLBACK_LINES = 5000;
 
 const views = new Map<string, TerminalView>();
 const outputRouter = new TerminalOutputRouter();
+
+/**
+ * Font new terminals are created with. Starts with the defaults and is replaced as soon as the
+ * stored settings are loaded, which also updates terminals created before that.
+ */
+let currentFont: TerminalFont = toTerminalFont(DEFAULT_SETTINGS);
+
+/**
+ * Applies a font to all terminals, including open ones (#21, "Sofortige Wirkung"). xterm.js
+ * measures the character size again when the option changes; visible terminals are fitted to
+ * their container right away, which sends the new columns and rows to the PTY via `onResize`.
+ * Hidden terminals are fitted when they are shown next.
+ * @param font The font from the settings.
+ */
+export function applyTerminalFont(font: TerminalFont): void {
+  currentFont = font;
+  const fontFamily = buildTerminalFontFamily(font.fontFamily);
+  for (const view of views.values()) {
+    view.terminal.options.fontFamily = fontFamily;
+    view.terminal.options.fontSize = font.fontSize;
+    if (view.isOpened && view.hostElement.isConnected) {
+      view.fitAddon.fit();
+    }
+  }
+}
 
 /**
  * Hands output from the main process to the xterm.js instance of its terminal, or buffers it
@@ -48,8 +75,8 @@ export function createTerminalView(terminalId: string): boolean {
     return false;
   }
   const terminal = new Terminal({
-    fontFamily: TERMINAL_FONT_FAMILY,
-    fontSize: TERMINAL_FONT_SIZE,
+    fontFamily: buildTerminalFontFamily(currentFont.fontFamily),
+    fontSize: currentFont.fontSize,
     scrollback: TERMINAL_SCROLLBACK_LINES,
     cursorBlink: true,
   });

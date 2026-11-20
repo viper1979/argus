@@ -1,6 +1,7 @@
 import type { IpcContract } from '@shared/ipc/contract';
 import type { IpcHandlers } from '@shared/ipc/contract-types';
 import { app } from 'electron';
+import { applySettingsPatch } from '@shared/domain/settings';
 import type { AppStateHolder } from '../persistence/app-state-holder';
 import type { ProjectService } from '../projects/project-service';
 import type { TaskService } from '../tasks/task-service';
@@ -65,8 +66,13 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
     },
     settings: {
       get: async () => (await stateHolder.read()).settings,
-      update: async (settings) =>
-        (await stateHolder.update((state) => ({ ...state, settings }))).settings,
+      update: async (patch) =>
+        (
+          await stateHolder.update((state) => ({
+            ...state,
+            settings: applySettingsPatch(state.settings, patch),
+          }))
+        ).settings,
     },
   };
 }

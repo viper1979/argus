@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '@shared/domain/settings';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createEmptyAppState, type AppState } from './app-state';
 import { createAppStateHolder, type AppStateHolder } from './app-state-holder';
@@ -38,7 +39,7 @@ class RecordingStateStore implements StateStore {
  * @returns A pure state change.
  */
 function setWorktreeRoot(worktreeRoot: string): (state: AppState) => AppState {
-  return (state) => ({ ...state, settings: { worktreeRoot } });
+  return (state) => ({ ...state, settings: { ...DEFAULT_SETTINGS, worktreeRoot } });
 }
 
 describe('createAppStateHolder', () => {
@@ -55,11 +56,11 @@ describe('createAppStateHolder', () => {
     // Both changes read the state; without a queue the second would overwrite the first.
     const appendA = (state: AppState): AppState => ({
       ...state,
-      settings: { worktreeRoot: `${state.settings.worktreeRoot ?? ''}A` },
+      settings: { ...DEFAULT_SETTINGS, worktreeRoot: `${state.settings.worktreeRoot ?? ''}A` },
     });
     const appendB = (state: AppState): AppState => ({
       ...state,
-      settings: { worktreeRoot: `${state.settings.worktreeRoot ?? ''}B` },
+      settings: { ...DEFAULT_SETTINGS, worktreeRoot: `${state.settings.worktreeRoot ?? ''}B` },
     });
 
     // Act
@@ -92,7 +93,7 @@ describe('createAppStateHolder', () => {
     // Assert
     await expect(failedUpdate).rejects.toThrow('EPERM');
     await expect(nextUpdate).resolves.toMatchObject({
-      settings: { worktreeRoot: 'D:\\Worktrees' },
+      settings: { ...DEFAULT_SETTINGS, worktreeRoot: 'D:\\Worktrees' },
     });
     expect(store.savedStates).toHaveLength(1);
   });
