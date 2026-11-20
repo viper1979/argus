@@ -8,7 +8,16 @@ Windows-Desktop-App, um mehrere Coding-Agents (zunächst Claude Code, später Co
 
 ## Status
 
-Konzeptphase – noch kein lauffähiger Code.
+Frühe Entwicklung: Das Grundgerüst (Electron-Fenster, typisierte IPC) steht, die Features folgen.
+
+## Entwicklung
+
+Voraussetzungen: Windows, Node 24, pnpm.
+
+```powershell
+pnpm install
+pnpm dev
+```
 
 ## Dokumentation
 
