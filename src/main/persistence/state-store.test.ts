@@ -22,6 +22,8 @@ const STATE_WITH_PROJECT: AppState = {
     },
   ],
   settings: { worktreeRoot: 'D:\\Worktrees' },
+  tasks: [],
+  consumedTaskNames: [],
 };
 
 /** Backup name for the fixed test clock; colons are not allowed in Windows file names. */
@@ -116,6 +118,24 @@ describe('createStateStore', () => {
     expect(state).toEqual(createEmptyAppState());
     const backupPath = join(directory, 'Argus', EXPECTED_BACKUP_FILE_NAME);
     expect(await readFile(backupPath, 'utf8')).toBe(invalidContent);
+  });
+
+  it('load_WithFileWrittenBeforeTasksExisted_KeepsProjectsAndHasNoTasks', async () => {
+    // Arrange
+    // Exactly the shape Argus wrote up to #3: no `tasks`, no `consumedTaskNames`.
+    const fileBeforeTasks = {
+      version: 1,
+      projects: STATE_WITH_PROJECT.projects,
+      settings: STATE_WITH_PROJECT.settings,
+    };
+    await writeStateFile(JSON.stringify(fileBeforeTasks));
+
+    // Act
+    const state = await store.load();
+
+    // Assert
+    expect(state).toEqual({ ...fileBeforeTasks, tasks: [], consumedTaskNames: [] });
+    expect(await readdir(join(directory, 'Argus'))).toEqual(['state.json']);
   });
 
   it('save_WhenFileExists_ReplacesItAndLeavesNoTemporaryFile', async () => {

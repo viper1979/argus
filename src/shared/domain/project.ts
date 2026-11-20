@@ -1,6 +1,10 @@
 import { z } from 'zod';
-import { isValidBranchName, isValidBranchPrefix } from './git-ref-name';
-import { isValidWindowsFolderName } from './windows-folder-name';
+import {
+  INVALID_BRANCH_NAME_MESSAGE,
+  isValidBranchName,
+  isValidBranchPrefix,
+} from './git-ref-name';
+import { INVALID_FOLDER_NAME_MESSAGE, isValidWindowsFolderName } from './windows-folder-name';
 
 /** Agent types Argus can start. Only Claude Code exists in the MVP; Codex follows later. */
 export const agentTypeSchema = z.enum(['claude-code']);
@@ -15,13 +19,13 @@ export const DEFAULT_AGENT_TYPE: AgentType = 'claude-code';
 export const projectSchema = z.object({
   id: z.uuid(),
   /** Unique per Argus installation; becomes a folder under the worktree root. */
-  name: z.string().trim().refine(isValidWindowsFolderName, 'Kein gültiger Ordnername'),
+  name: z.string().trim().refine(isValidWindowsFolderName, INVALID_FOLDER_NAME_MESSAGE),
   /** Absolute path of the main repository on disk. */
   repoPath: z.string().min(1),
   /** Branch new tasks are based on by default, e.g. `main`. */
-  mainBranch: z.string().trim().refine(isValidBranchName, 'Kein gültiger Branch-Name'),
+  mainBranch: z.string().trim().refine(isValidBranchName, INVALID_BRANCH_NAME_MESSAGE),
   /** First segment of every task branch, e.g. `agent` for `agent/<task-name>`. */
-  branchPrefix: z.string().trim().refine(isValidBranchPrefix, 'Kein gültiger Branch-Präfix'),
+  branchPrefix: z.string().trim().refine(isValidBranchPrefix, 'Kein gültiger Branch-Präfix.'),
   defaultAgentType: agentTypeSchema,
   /** Local PowerShell script that prepares a new worktree; `null` if there is none. */
   setupScript: z.string().nullable(),

@@ -5,7 +5,7 @@ import { createGitClient, type GitClient, type GitResult, type GitRunner } from 
 const REPO_PATH = 'D:\\Repos\\webshop';
 
 /** Result of a git call that failed, e.g. because a ref does not exist. */
-const FAILED: GitResult = { exitCode: 1, stdout: '' };
+const FAILED: GitResult = { exitCode: 1, stdout: '', stderr: '' };
 
 /**
  * Builds a fake git runner that answers known commands and fails all others.
@@ -31,8 +31,13 @@ describe('createGitClient', () => {
       answers['symbolic-ref --short refs/remotes/origin/HEAD'] = {
         exitCode: 0,
         stdout: 'origin/develop\n',
+        stderr: '',
       };
-      answers['show-ref --verify --quiet refs/heads/main'] = { exitCode: 0, stdout: '' };
+      answers['show-ref --verify --quiet refs/heads/main'] = {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      };
 
       // Act
       const mainBranch = await gitClient.detectMainBranch(REPO_PATH);
@@ -43,7 +48,11 @@ describe('createGitClient', () => {
 
     it('detectMainBranch_WithoutOriginHeadButWithMaster_ReturnsMaster', async () => {
       // Arrange
-      answers['show-ref --verify --quiet refs/heads/master'] = { exitCode: 0, stdout: '' };
+      answers['show-ref --verify --quiet refs/heads/master'] = {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      };
 
       // Act
       const mainBranch = await gitClient.detectMainBranch(REPO_PATH);
@@ -54,8 +63,16 @@ describe('createGitClient', () => {
 
     it('detectMainBranch_WithoutOriginHeadButWithMainAndMaster_ReturnsMain', async () => {
       // Arrange
-      answers['show-ref --verify --quiet refs/heads/main'] = { exitCode: 0, stdout: '' };
-      answers['show-ref --verify --quiet refs/heads/master'] = { exitCode: 0, stdout: '' };
+      answers['show-ref --verify --quiet refs/heads/main'] = {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      };
+      answers['show-ref --verify --quiet refs/heads/master'] = {
+        exitCode: 0,
+        stdout: '',
+        stderr: '',
+      };
 
       // Act
       const mainBranch = await gitClient.detectMainBranch(REPO_PATH);
@@ -91,7 +108,11 @@ describe('createGitClient', () => {
     it('resolveRepositoryRoot_InSubfolderOfRepository_ReturnsRootAsWindowsPath', async () => {
       // Arrange
       // git reports the root with forward slashes, even on Windows.
-      answers['rev-parse --show-toplevel'] = { exitCode: 0, stdout: 'D:/Repos/webshop\n' };
+      answers['rev-parse --show-toplevel'] = {
+        exitCode: 0,
+        stdout: 'D:/Repos/webshop\n',
+        stderr: '',
+      };
 
       // Act
       const root = await gitClient.resolveRepositoryRoot('D:\\Repos\\webshop\\src');

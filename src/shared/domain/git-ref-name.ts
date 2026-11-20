@@ -49,3 +49,39 @@ export function isValidBranchName(branchName: string): boolean {
 export function isValidBranchPrefix(branchPrefix: string): boolean {
   return !branchPrefix.includes('/') && isValidBranchName(branchPrefix);
 }
+
+/**
+ * Checks whether git can create a branch next to the existing ones. Git stores branches as files
+ * below `.git/refs/heads`, so on Windows two names that differ only in case are the same file,
+ * and a branch cannot be named like a folder of another branch (`agent` vs. `agent/login`).
+ * Packed refs hide this from `git show-ref`, but the next write still collides.
+ * @param branch The new branch, e.g. `agent/login`.
+ * @param existingBranches All local branches, e.g. from `git for-each-ref refs/heads`.
+ * @returns `true` if an existing branch has the same name, is a parent or a child of it.
+ */
+export function isBranchBlocked(branch: string, existingBranches: readonly string[]): boolean {
+  const newBranch = branch.toLowerCase();
+  return existingBranches.some((existingBranch) => {
+    const existing = existingBranch.toLowerCase();
+    return (
+      existing === newBranch ||
+      newBranch.startsWith(`${existing}/`) ||
+      existing.startsWith(`${newBranch}/`)
+    );
+  });
+}
+
+/**
+ * Checks whether a branch with exactly this name exists, ignoring case: on Windows `Agent` and
+ * `agent` are the same file below `.git/refs/heads`.
+ * @param branch The name to look for, e.g. the branch prefix `agent`.
+ * @param existingBranches All local branches.
+ * @returns `true` if one of them has the name.
+ */
+export function hasBranchNamed(branch: string, existingBranches: readonly string[]): boolean {
+  const wanted = branch.toLowerCase();
+  return existingBranches.some((existingBranch) => existingBranch.toLowerCase() === wanted);
+}
+
+/** Message shown for a branch name git would reject, in schemas and forms alike. */
+export const INVALID_BRANCH_NAME_MESSAGE = 'Kein gültiger Branch-Name.';

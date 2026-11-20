@@ -10,7 +10,7 @@ const RESERVED_DEVICE_NAME = /^(con|prn|aux|nul|conin\$|conout\$|com[1-9¹²³]|
 
 /**
  * Checks whether a string can be used as one folder name on Windows. Project names become
- * folders under the worktree root (`<WorktreeRoot>\<Projekt>\<task-name>`, concept 5.2).
+ * folders under the worktree root (`<WorktreeRoot>\<project>\<task-name>`, concept 5.2).
  * @param folderName Candidate name, e.g. `Webshop`.
  * @returns `true` if Windows accepts the name as a folder.
  */
@@ -25,3 +25,6 @@ export function isValidWindowsFolderName(folderName: string): boolean {
   const baseName = folderName.split('.')[0] ?? '';
   return !RESERVED_DEVICE_NAME.test(baseName);
 }
+
+/** Message shown for a name Windows cannot use as folder, in all schemas. */
+export const INVALID_FOLDER_NAME_MESSAGE = 'Kein gültiger Ordnername.';

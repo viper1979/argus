@@ -3,10 +3,12 @@ import type { IpcHandlers } from '@shared/ipc/contract-types';
 import { app } from 'electron';
 import type { AppStateHolder } from '../persistence/app-state-holder';
 import type { ProjectService } from '../projects/project-service';
+import type { TaskService } from '../tasks/task-service';
 
 /** Services the IPC handlers delegate to; created once at app start. */
 export interface IpcHandlerDependencies {
   readonly projectService: ProjectService;
+  readonly taskService: TaskService;
   readonly stateHolder: AppStateHolder;
   /**
    * Shows the native folder picker.
@@ -22,7 +24,7 @@ export interface IpcHandlerDependencies {
  * @returns Handlers grouped by domain, matching {@link IpcContract}.
  */
 export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHandlers<IpcContract> {
-  const { projectService, stateHolder, pickFolder } = dependencies;
+  const { projectService, taskService, stateHolder, pickFolder } = dependencies;
 
   return {
     app: {
@@ -39,6 +41,10 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
         await projectService.remove(projectId);
         return {};
       },
+    },
+    task: {
+      list: async () => ({ tasks: await taskService.list() }),
+      create: (request) => taskService.create(request),
     },
     settings: {
       get: async () => (await stateHolder.read()).settings,

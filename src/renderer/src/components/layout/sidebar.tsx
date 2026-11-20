@@ -1,12 +1,15 @@
 import { useState } from 'react';
-import { Eye, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
+import { Eye, GitBranch, Pencil, Plus, Settings, Trash2 } from 'lucide-react';
 import type { AddProjectResult, Project } from '@shared/domain/project';
+import type { Task } from '@shared/domain/task';
 import { ProjectSettingsDialog } from '@renderer/components/projects/project-settings-dialog';
 import { RemoveProjectDialog } from '@renderer/components/projects/remove-project-dialog';
 import { SettingsDialog } from '@renderer/components/settings/settings-dialog';
+import { CreateTaskDialog } from '@renderer/components/tasks/create-task-dialog';
 import { Button } from '@renderer/components/ui/button';
 import { useAppInfo } from '@renderer/hooks/use-app-info';
 import { useProjects } from '@renderer/hooks/use-projects';
+import { useTasks } from '@renderer/hooks/use-tasks';
 
 /** German message per reason why a folder could not be added. */
 const ADD_PROJECT_FAILURE_MESSAGES: Record<
@@ -25,10 +28,42 @@ const UNEXPECTED_ADD_ERROR_MESSAGE = 'Das Projekt konnte nicht hinzugefügt werd
 /** Shown when removing fails; details are in the log. */
 const UNEXPECTED_REMOVE_ERROR_MESSAGE = 'Das Projekt konnte nicht entfernt werden.';
 
-/** Left navigation column: projects as groups; their tasks follow with task creation. */
+interface ProjectTaskListProps {
+  /** Tasks of one project, or `null` while the tasks are loading (as in {@link useTasks}). */
+  readonly tasks: Task[] | null;
+}
+
+/** The tasks below one project heading; opening a task follows with the task view (#5). */
+function ProjectTaskList(props: ProjectTaskListProps): React.JSX.Element | null {
+  const { tasks } = props;
+  if (tasks === null) {
+    return null;
+  }
+  if (tasks.length === 0) {
+    return <p className="px-2 text-xs text-muted-foreground">Noch keine Tasks</p>;
+  }
+  return (
+    <ul>
+      {tasks.map((task) => (
+        <li
+          key={task.id}
+          className="flex items-center gap-2 rounded-md px-2 py-1"
+          title={`${task.branch}\n${task.worktreePath}`}
+        >
+          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+          <span className="truncate">{task.name}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Left navigation column: projects as groups with their tasks. */
 export function Sidebar(): React.JSX.Element {
   const appInfo = useAppInfo();
   const { projects, addProject, updateProject, removeProject } = useProjects();
+  const { tasks, createTask } = useTasks();
+  const [projectForNewTask, setProjectForNewTask] = useState<Project | null>(null);
   const [editedProject, setEditedProject] = useState<Project | null>(null);
   const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -93,6 +128,17 @@ export function Sidebar(): React.JSX.Element {
               <Button
                 variant="ghost"
                 size="icon"
+                className="size-6"
+                title="Task anlegen"
+                onClick={() => {
+                  setProjectForNewTask(project);
+                }}
+              >
+                <Plus className="size-3" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
                 className="size-6 opacity-0 group-hover:opacity-100"
                 title="Projekt-Einstellungen"
                 onClick={() => {
@@ -113,7 +159,9 @@ export function Sidebar(): React.JSX.Element {
                 <Trash2 className="size-3" />
               </Button>
             </div>
-            <p className="px-2 text-xs text-muted-foreground">Noch keine Tasks</p>
+            <ProjectTaskList
+              tasks={tasks && tasks.filter((task) => task.projectId === project.id)}
+            />
           </section>
         ))}
       </nav>
@@ -148,6 +196,16 @@ export function Sidebar(): React.JSX.Element {
         }}
         onClose={() => {
           setProjectToRemove(null);
+        }}
+      />
+      <CreateTaskDialog
+        project={projectForNewTask}
+        onCreate={createTask}
+        onClose={() => {
+          setProjectForNewTask(null);
+        }}
+        onOpenSettings={() => {
+          setIsSettingsOpen(true);
         }}
       />
       <SettingsDialog

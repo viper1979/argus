@@ -42,9 +42,12 @@ export interface ProjectService {
   list(): Promise<Project[]>;
 }
 
+/** The git queries the project service needs. */
+export type ProjectGitClient = Pick<GitClient, 'resolveRepositoryRoot' | 'detectMainBranch'>;
+
 /** Collaborators of the project service; `generateId` makes ids deterministic in tests. */
 export interface ProjectServiceOptions {
-  readonly gitClient: GitClient;
+  readonly gitClient: ProjectGitClient;
   readonly stateHolder: AppStateHolder;
   readonly generateId: () => string;
 }

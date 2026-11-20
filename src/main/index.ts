@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ipcContract } from '@shared/ipc/contract';
@@ -8,9 +9,11 @@ import { createProcessGitRunner } from './git/process-git-runner';
 import { createIpcHandlers } from './ipc/ipc-handlers';
 import { registerIpcHandlers } from './ipc/register-ipc-handlers';
 import { createConsoleLogger } from './logging/console-logger';
+import type { Logger } from './logging/logger';
 import { createAppStateHolder } from './persistence/app-state-holder';
 import { createStateStore } from './persistence/state-store';
 import { createProjectService } from './projects/project-service';
+import { createTaskService } from './tasks/task-service';
 
 const MAIN_WINDOW_WIDTH = 1280;
 const MAIN_WINDOW_HEIGHT = 800;
@@ -94,6 +97,27 @@ async function pickFolder(title: string): Promise<string | null> {
   return result.canceled ? null : (result.filePaths[0] ?? null);
 }
 
+/**
+ * Creates a check whether a file or folder exists, e.g. a worktree folder created outside Argus.
+ * @param logger Receives access errors other than "does not exist".
+ * @returns The check.
+ */
+function createPathExists(logger: Logger): (path: string) => Promise<boolean> {
+  return async (path) => {
+    try {
+      await access(path);
+      return true;
+    } catch (error: unknown) {
+      if (error instanceof Error && 'code' in error && error.code === 'ENOENT') {
+        return false;
+      }
+      // E.g. EACCES: something is there, but Argus may not use it, so treat it as taken.
+      logger.warn('Could not check whether a path exists; treating it as taken', { path, error });
+      return true;
+    }
+  };
+}
+
 /** Wires services and IPC and opens the main window once Electron is ready. */
 function startApp(): void {
   // userData is %APPDATA%\Argus because of productName (concept, section 4).
@@ -103,16 +127,20 @@ function startApp(): void {
     now: () => new Date(),
   });
   const stateHolder = createAppStateHolder(stateStore);
-  const projectService = createProjectService({
-    gitClient: createGitClient(createProcessGitRunner()),
+  const gitClient = createGitClient(createProcessGitRunner());
+  const projectService = createProjectService({ gitClient, stateHolder, generateId: randomUUID });
+  const taskService = createTaskService({
+    gitClient,
     stateHolder,
     generateId: randomUUID,
+    pathExists: createPathExists(createConsoleLogger('fs')),
+    logger: createConsoleLogger('tasks'),
   });
 
   registerIpcHandlers({
     ipcMain,
     contract: ipcContract,
-    handlers: createIpcHandlers({ projectService, stateHolder, pickFolder }),
+    handlers: createIpcHandlers({ projectService, taskService, stateHolder, pickFolder }),
     logger: createConsoleLogger('ipc'),
     allowedRendererUrl: resolveRendererUrl(),
   });
