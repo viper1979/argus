@@ -4,6 +4,24 @@ Electron-Desktop-App (Windows), die parallele Coding-Agent-Sessions in eigenen G
 
 Vor dem Planen eines Features oder bei Fragen zum Umfang: [docs/konzept.md](docs/konzept.md) lesen (Domänenmodell, Statusmodell, Abläufe, MVP-Grenzen, Backlog).
 
+## Befehle
+
+| Zweck | Befehl |
+|---|---|
+| App im Dev-Modus starten | `pnpm dev` |
+| Tests (Vitest) | `pnpm test` (Watch: `pnpm test:watch`) |
+| Lint (ESLint, type-aware) | `pnpm lint` |
+| Typecheck | `pnpm typecheck` |
+| Formatieren (Prettier, ohne Markdown) | `pnpm format` |
+| Produktions-Build nach `out/` | `pnpm build` |
+
+## Code-Struktur
+
+- `src/main/`: Main-Prozess. `src/preload/`: Preload-Brücke. `src/renderer/`: React-UI. `src/shared/`: von allen Prozessen genutzt.
+- **IPC:** Jeder Aufruf wird zuerst in `src/shared/ipc/contract.ts` als `domain → action → { request, response }` (zod) eingetragen. Der Kanalname `domain:action` wird abgeleitet und nie von Hand geschrieben. Main implementiert ihn in `src/main/ipc/ipc-handlers.ts`, der Renderer ruft `window.argus.<domain>.<action>()` auf. Validiert wird beides im Main-Prozess (`registerIpcHandlers`).
+- Das Preload läuft mit `sandbox: true` und darf nur `electron` per `require` laden. Deshalb bündelt electron-vite alle anderen Abhängigkeiten ins Preload (`externalizeDeps: false`).
+- shadcn/ui-Komponenten: `pnpm dlx shadcn@<version> add <name>`. Danach den Import von `cn` prüfen (muss `@renderer/lib/utils` sein) und kontrollieren, dass die CLI keine unerwarteten Pakete installiert hat.
+
 ## Fachsprache
 
 [GLOSSARY.md](GLOSSARY.md) ist das verbindliche Vokabular. Docs, UI-Texte und Commit-Messages verwenden die deutschen Glossar-Begriffe; Code verwendet ausschließlich diese englischen Entsprechungen:
