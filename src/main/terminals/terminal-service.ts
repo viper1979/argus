@@ -5,7 +5,11 @@ import type {
 } from '@shared/domain/terminal';
 import type { Logger } from '../logging/logger';
 import type { AppStateHolder } from '../persistence/app-state-holder';
-import { buildTerminalEnvironment } from './build-terminal-environment';
+import {
+  buildTerminalEnvironment,
+  type EnvironmentAdjustments,
+} from './build-terminal-environment';
+import { encodePowerShellCommand } from './powershell';
 import type { PtyProcess, PtySpawnOptions, SpawnPty } from './pty';
 import { ShellExecutableNotFoundError } from './shell-executable-not-found-error';
 
@@ -14,9 +18,10 @@ export interface TerminalService {
   /**
    * Opens a new terminal in the worktree of a task.
    * @param request Task and the size xterm.js measured.
+   * @param launch What to run in the shell right away; without it the shell just waits for input.
    * @returns The id of the new terminal, or why it could not be opened.
    */
-  open(request: OpenTerminalRequest): Promise<OpenTerminalResult>;
+  open(request: OpenTerminalRequest, launch?: TerminalLaunch): Promise<OpenTerminalResult>;
 
   /**
    * Sends input to a terminal. Input for a terminal that has already ended is dropped: keystrokes
@@ -45,6 +50,16 @@ export interface TerminalService {
    * outlives the app (ADR 0004, concept 5.6). From then on {@link open} starts no new terminal.
    */
   closeAll(): Promise<void>;
+}
+
+/**
+ * A command a terminal runs as soon as its PowerShell has started, e.g. an agent CLI. Main-internal
+ * and agent-neutral: the content comes from the agent type adapter, the PowerShell details
+ * (`-NoExit`, `-EncodedCommand`) stay in the terminal service.
+ */
+export interface TerminalLaunch extends EnvironmentAdjustments {
+  /** PowerShell command line; the shell stays open after it ended. */
+  readonly startCommand: string;
 }
 
 /** A terminal whose process is running. */
@@ -92,6 +107,25 @@ const SHELL_CANDIDATES = ['pwsh.exe', 'powershell.exe'] as const;
 const SHELL_ARGS = ['-NoLogo'] as const;
 
 /**
+ * Builds the shell arguments for a terminal.
+ * @param launch Command to run right away, if any.
+ * @returns Plain interactive arguments, or ones that run the command and keep the shell open.
+ */
+function buildShellArgs(launch: TerminalLaunch | undefined): readonly string[] {
+  if (!launch) {
+    return SHELL_ARGS;
+  }
+  // -NoExit keeps the PowerShell usable after the command ended (ADR 0002); -EncodedCommand
+  // keeps quotes, $ and umlauts away from command-line parsing (ADR 0003).
+  return [
+    ...SHELL_ARGS,
+    '-NoExit',
+    '-EncodedCommand',
+    encodePowerShellCommand(launch.startCommand),
+  ];
+}
+
+/**
  * How long closing a terminal waits for its process to end after kill(). ConPTY usually reports
  * the end within milliseconds; the bound only protects against a process that never does.
  */
@@ -120,13 +154,18 @@ async function waitUntilExited(exited: Promise<void>, timeoutMs: number): Promis
 /**
  * Starts the first PowerShell that exists.
  * @param spawnPty The PTY factory.
+ * @param shellArgs Arguments for whichever PowerShell is found; both understand the same ones.
  * @param spawnOptions Working directory, environment and size.
  * @returns The running shell, or `null` if no candidate exists.
  */
-function startShell(spawnPty: SpawnPty, spawnOptions: PtySpawnOptions): PtyProcess | null {
+function startShell(
+  spawnPty: SpawnPty,
+  shellArgs: readonly string[],
+  spawnOptions: PtySpawnOptions,
+): PtyProcess | null {
   for (const shell of SHELL_CANDIDATES) {
     try {
-      return spawnPty(shell, SHELL_ARGS, spawnOptions);
+      return spawnPty(shell, shellArgs, spawnOptions);
     } catch (error: unknown) {
       // Only a missing executable leads to the next candidate; any other start failure is a
       // real problem and must surface.
@@ -173,7 +212,7 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
   };
 
   return {
-    open: async ({ taskId, cols, rows }) => {
+    open: async ({ taskId, cols, rows }, launch) => {
       const state = await stateHolder.read();
       // Checked after the await: closeAll may have taken its snapshot of running terminals in
       // the meantime, and a shell started now would never be closed and outlive Argus.
@@ -185,9 +224,9 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
         return { ok: false, reason: 'task-not-found' };
       }
 
-      const shell = startShell(spawnPty, {
+      const shell = startShell(spawnPty, buildShellArgs(launch), {
         cwd: task.worktreePath,
-        env: buildTerminalEnvironment(processEnv),
+        env: buildTerminalEnvironment(processEnv, launch),
         cols,
         rows,
       });

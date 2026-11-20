@@ -18,16 +18,64 @@ const GIT_ACCEPTED_COUNT_PATTERN = /^[ \t\n\v\f\r]*\+?(\d+)$/;
 /** git rejects counts above INT_MAX ("too many entries"); Argus must stay below after +1. */
 const MAX_GIT_CONFIG_COUNT = 2_147_483_647;
 
+/** Changes a terminal makes to the inherited environment, e.g. for an agent session. */
+export interface EnvironmentAdjustments {
+  /** Variables set on top of the inherited environment; replace other spellings of the name. */
+  readonly addVariables: Readonly<Record<string, string>>;
+  /**
+   * Decides which inherited variables are removed before the start.
+   * @param name Name of the inherited variable as stored.
+   * @param inheritedEnvironment The whole inherited environment.
+   * @returns `true` to remove the variable.
+   */
+  readonly removeVariable: (
+    name: string,
+    inheritedEnvironment: Readonly<TerminalEnvironment>,
+  ) => boolean;
+}
+
 /**
- * Builds the environment a terminal of a task is started with: the inherited environment plus
- * `push.autoSetupRemote=true` via `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`.
+ * Builds the environment a terminal of a task is started with: the inherited environment, minus
+ * removed and plus added variables, plus `push.autoSetupRemote=true` via
+ * `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`.
  * @param processEnv The environment Argus itself runs with; it is not modified.
+ * @param adjustments Variables to remove and add, if any.
  * @returns A new environment object for the terminal.
  */
-export function buildTerminalEnvironment(processEnv: NodeJS.ProcessEnv): TerminalEnvironment {
-  const environment = copyDefinedVariables(processEnv);
+export function buildTerminalEnvironment(
+  processEnv: NodeJS.ProcessEnv,
+  adjustments?: EnvironmentAdjustments,
+): TerminalEnvironment {
+  const inheritedEnvironment = copyDefinedVariables(processEnv);
+  const environment = { ...inheritedEnvironment };
+  if (adjustments) {
+    applyAdjustments(environment, inheritedEnvironment, adjustments);
+  }
   appendAutoSetupRemote(environment);
   return environment;
+}
+
+/**
+ * Removes the rejected inherited variables, then sets the added ones. Removing first lets an added
+ * variable survive a predicate that would also match its name.
+ * @param environment The terminal environment; modified in place.
+ * @param inheritedEnvironment Unmodified copy the predicate decides on.
+ * @param adjustments Variables to remove and add.
+ */
+function applyAdjustments(
+  environment: TerminalEnvironment,
+  inheritedEnvironment: Readonly<TerminalEnvironment>,
+  adjustments: EnvironmentAdjustments,
+): void {
+  for (const name of Object.keys(inheritedEnvironment)) {
+    if (adjustments.removeVariable(name, inheritedEnvironment)) {
+      // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- variable names are data here
+      delete environment[name];
+    }
+  }
+  for (const [name, value] of Object.entries(adjustments.addVariables)) {
+    writeVariable(environment, name, value);
+  }
 }
 
 /**

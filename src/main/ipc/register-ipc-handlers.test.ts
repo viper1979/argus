@@ -11,6 +11,7 @@ import {
   type IpcMainLike,
 } from './register-ipc-handlers';
 import { UntrustedIpcSenderError } from './untrusted-ipc-sender-error';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 type InvokeListener = (event: IpcInvokeEventLike, ...args: unknown[]) => unknown;
 
@@ -98,7 +99,7 @@ describe('registerIpcHandlers', () => {
     ipcMain = new FakeIpcMain();
     logWarn = vi.fn<Logger['warn']>();
     logError = vi.fn<Logger['error']>();
-    logger = { warn: logWarn, error: logError };
+    logger = createFakeLogger({ warn: logWarn, error: logError });
   });
 
   it('registerIpcHandlers_WithValidRequest_ReturnsHandlerResponse', async () => {

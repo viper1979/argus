@@ -1,10 +1,15 @@
 import { useState } from 'react';
-import { FolderOpen, GitBranch, Plus, SquareTerminal, X } from 'lucide-react';
+import { Bot, FolderOpen, GitBranch, Plus, SquareTerminal, X } from 'lucide-react';
 import type { Task } from '@shared/domain/task';
 import { TerminalPane } from '@renderer/components/tasks/terminal-pane';
 import { Button } from '@renderer/components/ui/button';
 import { useTerminals, type OpenTerminalFailureReason } from '@renderer/hooks/use-terminals';
 import { cn } from '@renderer/lib/utils';
+import {
+  useTaskView,
+  type AgentSessionStartFailure,
+  type TerminalTabKind,
+} from '@renderer/stores/task-view-store';
 
 /** German message per reason why a terminal could not be opened. */
 const OPEN_TERMINAL_FAILURE_MESSAGES: Record<OpenTerminalFailureReason, string> = {
@@ -12,6 +17,28 @@ const OPEN_TERMINAL_FAILURE_MESSAGES: Record<OpenTerminalFailureReason, string> 
   'shell-unavailable':
     'Es wurde keine PowerShell gefunden. Argus braucht pwsh oder Windows PowerShell.',
   'app-closing': 'Argus wird gerade beendet.',
+};
+
+/** How the tab bar shows each kind of terminal tab. */
+const TAB_PRESENTATION: Record<
+  TerminalTabKind,
+  { readonly icon: typeof SquareTerminal; readonly isClosable: boolean }
+> = {
+  terminal: { icon: SquareTerminal, isClosable: true },
+  // Ends via /exit or `exit` in its PowerShell, not via the tab (concept 5.3, step 5).
+  'agent-session': { icon: Bot, isClosable: false },
+};
+
+/** German message per reason why the agent session of a new task could not be started. */
+const AGENT_SESSION_FAILURE_MESSAGES: Record<AgentSessionStartFailure, string> = {
+  'task-not-found': 'Die Agent-Session wurde nicht gestartet: Der Task wurde nicht gefunden.',
+  'already-running': 'In diesem Task läuft bereits eine Agent-Session.',
+  'hooks-unavailable':
+    'Die Agent-Session wurde nicht gestartet: Der Hook-Server ist nicht verfügbar, Argus könnte ihren Status nicht anzeigen. Details stehen im Log.',
+  'shell-unavailable':
+    'Die Agent-Session wurde nicht gestartet: Es wurde keine PowerShell gefunden. Argus braucht pwsh oder Windows PowerShell.',
+  'app-closing': 'Die Agent-Session wurde nicht gestartet: Argus wird gerade beendet.',
+  unexpected: 'Die Agent-Session konnte nicht gestartet werden. Details stehen im Log.',
 };
 
 /** Shown when opening fails for a technical reason; details are in the log. */
@@ -31,6 +58,7 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
   const { tabs, activeTerminalId, openTerminal, closeTerminal, activateTerminal } = useTerminals(
     task.id,
   );
+  const agentSessionFailure = useTaskView((state) => state.agentSessionFailureByTask[task.id]);
   const [actionError, setActionError] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
 
@@ -72,6 +100,7 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
       >
         {tabs.map((tab) => {
           const isActive = tab.terminalId === activeTerminalId;
+          const { icon: TabIcon, isClosable } = TAB_PRESENTATION[tab.kind];
           return (
             <div
               key={tab.terminalId}
@@ -84,28 +113,30 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
                 type="button"
                 role="tab"
                 aria-selected={isActive}
-                className="flex items-center gap-1.5 py-1 pl-2 pr-1"
+                className={cn('flex items-center gap-1.5 py-1 pl-2', isClosable ? 'pr-1' : 'pr-2')}
                 onClick={() => {
                   activateTerminal(tab.terminalId);
                 }}
               >
-                <SquareTerminal className="size-3.5" aria-hidden />
+                <TabIcon className="size-3.5" aria-hidden />
                 {tab.title}
               </button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-5"
-                title={`${tab.title} schließen`}
-                onClick={() => {
-                  closeTerminal(tab.terminalId).catch((error: unknown) => {
-                    console.error('Could not close terminal', error);
-                    setActionError(UNEXPECTED_CLOSE_ERROR_MESSAGE);
-                  });
-                }}
-              >
-                <X className="size-3" />
-              </Button>
+              {isClosable && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="size-5"
+                  title={`${tab.title} schließen`}
+                  onClick={() => {
+                    closeTerminal(tab.terminalId).catch((error: unknown) => {
+                      console.error('Could not close terminal', error);
+                      setActionError(UNEXPECTED_CLOSE_ERROR_MESSAGE);
+                    });
+                  }}
+                >
+                  <X className="size-3" />
+                </Button>
+              )}
             </div>
           );
         })}
@@ -125,6 +156,14 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
           <Plus className="size-4" />
         </Button>
       </div>
+      {agentSessionFailure && (
+        <p
+          role="alert"
+          className="mx-4 mt-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+        >
+          {AGENT_SESSION_FAILURE_MESSAGES[agentSessionFailure]}
+        </p>
+      )}
       {actionError && (
         <p
           role="alert"

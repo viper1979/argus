@@ -5,6 +5,7 @@ import {
   type BeforeQuitEventLike,
   type QuitControlLike,
 } from './close-terminals-before-quit';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 /** Fake of Electron's `app` quit flow: lets the test fire `before-quit` and see `quit()`. */
 class FakeQuitControl implements QuitControlLike {
@@ -71,7 +72,7 @@ describe('closeTerminalsBeforeQuit', () => {
     closing = createDeferred();
     closeAll = vi.fn(() => closing.promise);
     logError = vi.fn();
-    closeTerminalsBeforeQuit(quitControl, { closeAll }, { warn: vi.fn(), error: logError });
+    closeTerminalsBeforeQuit(quitControl, { closeAll }, createFakeLogger({ error: logError }));
   });
 
   it('closeTerminalsBeforeQuit_OnFirstBeforeQuit_IsCancelledAndQuitsAgainOnlyAfterAllTerminalsEnded', async () => {

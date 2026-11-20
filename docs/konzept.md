@@ -127,6 +127,7 @@ flowchart LR
         TaskService
         WorktreeService[WorktreeService<br/>git CLI]
         TerminalService[TerminalService<br/>node-pty]
+        AgentSessionService
         HookServer[HookServer<br/>127.0.0.1]
         StatusTracker
         Store[(state.json)]
@@ -139,6 +140,9 @@ flowchart LR
     StatusTracker --> Renderer
     TaskService --> WorktreeService
     TaskService --> TerminalService
+    AgentSessionService --> AgentAdapter
+    AgentSessionService --> TerminalService
+    AgentSessionService --> Store
     ProjectService --> Store
     TaskService --> Store
 ```
@@ -166,6 +170,7 @@ Wie Orca, auf das Nötige reduziert:
 | `TaskService` | Tasks anlegen und entfernen, koordiniert Worktree und Terminals |
 | `WorktreeService` | `git worktree add/remove`, Branch löschen, Prüfung „geändert/ungepusht“ |
 | `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0) als Terminal-Signale weiter |
+| `AgentSessionService` | Agent-Sessions starten: höchstens eine laufende pro Task, speichert sie in `state.json`, holt Startbefehl und Umgebung vom `AgentTypeAdapter` und öffnet damit ein Terminal |
 | `HookServer` | HTTP auf `127.0.0.1:<port>`, prüft das Token, nimmt Hook-Events an |
 | `AgentTypeAdapter` | **Schnittstelle pro Agent-Typ**: Startbefehl, Resume-Befehl, Hook-Konfiguration, Event → Status, Terminal-Signal → Status (Abbruch-Erkennung) |
 | `StatusTracker` | hält den Status pro Agent-Session, wendet die Regeln aus Abschnitt 3 an, löst Notifications aus |
@@ -179,13 +184,20 @@ Die Schnittstelle, über die Codex später andockt:
 /** Everything the Argus needs to know about one agent CLI. */
 interface AgentTypeAdapter {
   /** Stable identifier, e.g. "claude-code" or "codex". */
-  readonly id: string;
+  readonly agentType: AgentType;
+  /** Strict zod schema of the hook settings file; the core validates against it before writing. */
+  readonly hookSettingsSchema: z.ZodType;
   /** Builds the shell command that starts a new agent session. */
   buildStartCommand(context: AgentLaunchContext): string;
   /** Builds the shell command that resumes an existing conversation. */
   buildResumeCommand(context: AgentLaunchContext, conversationId: string): string;
-  /** Builds the hook settings file content for the given hook server port; validated with zod before writing. */
-  buildHookSettings(port: number): HookSettingsFile;
+  /** Builds the hook settings file content for the given hook server port. */
+  buildHookSettings(port: number): unknown;
+  /** Decides whether an inherited environment variable must not reach the agent session. */
+  shouldRemoveInheritedVariable(
+    name: string,
+    inheritedEnvironment: Readonly<Record<string, string>>,
+  ): boolean;
   /** Translates a raw hook payload into a status event, or null if irrelevant. */
   interpretHookEvent(payload: unknown): AgentStatusEvent | null;
   /** Translates a terminal signal (key press, title change) into a status event, e.g. an interrupt. */
@@ -220,21 +232,25 @@ type TerminalSignal =
    - `push.autoSetupRemote` schreibt Argus **nicht** in die Repo-Config. Jedes Terminal des Tasks bekommt den Wert per `GIT_CONFIG_*`-Umgebung ([ADR 0006](adr/0006-push-autosetupremote-per-umgebung.md)).
 4. Ist ein Setup-Skript vorhanden: Es läuft **sichtbar** im ersten Terminal, mit `ARGUS_ROOT_PATH` (Haupt-Repo) und `ARGUS_WORKTREE_PATH` (Worktree) in der Umgebung. Die Agent-Session startet erst, wenn das Setup beendet ist.
    - Endet das Setup mit Fehler (Exit-Code ≠ 0), kommt die Rückfrage **„Setup fehlgeschlagen. Agent-Session trotzdem starten?“**. Die Ausgabe des Setups bleibt im Terminal sichtbar.
-5. Agent-Session starten (siehe 5.3)
+5. Agent-Session starten (siehe 5.3). Argus zeigt den neuen Task sofort an. Lässt sich die Agent-Session nicht starten, bleibt der Task bestehen, und die Task-Ansicht nennt den Grund.
 
 ### 5.3 Agent-Session starten bzw. fortsetzen
 
-**Vorab, bei jedem App-Start:** Argus schreibt die Hook-Settings-Datei `%APPDATA%\Argus\hooks\claude-code.json` mit dem aktuellen Port des Hook-Servers. Es ist eine Datei für alle Agent-Sessions. Token und Agent-Session-ID kommen über Header aus Umgebungsvariablen, der Port steht als Zahl in der URL, weil `$VAR` in der `url` nicht aufgelöst wird.
+**Vorab, bei jedem App-Start:** Argus startet den Hook-Server auf `127.0.0.1` mit zufälligem Port und erzeugt ein Token. Erst wenn der Server lauscht, schreibt Argus die Hook-Settings-Datei `%APPDATA%\Argus\hooks\claude-code.json` mit dem aktuellen Port. Es ist eine Datei für alle Agent-Sessions. Token und Agent-Session-ID kommen über Header aus Umgebungsvariablen, der Port steht als Zahl in der URL, weil `$VAR` in der `url` nicht aufgelöst wird. Der Hook-Server antwortet mit `204`, bei fehlendem Token mit `401`, bei falschem mit `403`.
+- Kann der Hook-Server nicht lauschen oder die Datei nicht geschrieben werden, startet die App trotzdem und protokolliert den Fehler. Eine Agent-Session lässt sich dann nicht starten: Ohne Hooks sähe Argus nie einen Status.
 
-1. Eine Agent-Session-ID erzeugen.
-2. PTY starten: `pwsh -NoExit` (Fallback `powershell.exe`), `cwd` = Worktree. Umgebungsvariablen setzen:
+1. Prüfen, dass im Task keine Agent-Session läuft (läuft = ihr PTY lebt). Sonst ist „Starten“ nicht möglich.
+2. Eine Agent-Session-ID erzeugen und die Agent-Session in `state.json` speichern (Konversations-ID zunächst leer).
+3. PTY starten: `pwsh -NoLogo -NoExit -EncodedCommand …` (Fallback `powershell.exe`), `cwd` = Worktree. Das Profil des Users wird wie bei jedem Terminal geladen, damit `PATH`, Aliase und Prompt auch nach dem Ende von `claude` gelten. Umgebungsvariablen setzen:
    - `ARGUS_TOKEN`
    - `ARGUS_SESSION_ID`
-   - Geerbte `CLAUDE*`-Variablen **entfernen**. Sonst erbt Claude die Variablen einer umgebenden Claude-Session, speichert kein Transcript, und `--resume` funktioniert nicht.
-3. Befehl: `claude --settings <hook-datei> ['<start-prompt>']`
+   - Geerbte `CLAUDE*`-Variablen **entfernen**, aber nur, wenn `CLAUDECODE` gesetzt ist, Argus also selbst in einer Claude-Session läuft. Sonst erbt Claude deren Variablen, speichert kein Transcript, und `--resume` funktioniert nicht. Im Normalbetrieb bleiben eigene Einstellungen des Users wie `CLAUDE_CONFIG_DIR` erhalten ([ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md)).
+4. Befehl: `claude --settings <hook-datei> [-- '<start-prompt>']`
    - Fortsetzen: `claude --settings <hook-datei> --resume <konversations-id>`
-   - Den Befehl per `-EncodedCommand` übergeben, den Start-Prompt darin als String in einfachen Anführungszeichen (`'` verdoppeln). Im Spike kamen `"`, `'`, `$`, Umlaute und Backticks unverfälscht an.
-4. `SessionStart` liefert die `session_id` von Claude. Sie wird als **Konversations-ID** gespeichert und für `--resume` gebraucht. Jedes weitere `SessionStart` (z. B. nach `/clear`) überschreibt sie.
+   - Den Befehl per `-EncodedCommand` übergeben, Start-Prompt und Pfad der Hook-Datei darin als Strings in einfachen Anführungszeichen (`'` verdoppeln). Im Spike kamen `"`, `'`, `$`, Umlaute und Backticks unverfälscht an. Ein leerer Start-Prompt gilt als keiner.
+   - Vor dem Start-Prompt steht immer `--`. Sonst hält Claude einen Prompt, der mit `-` beginnt, für eine Option und startet nicht (`error: unknown option`, Smoke-Test zu #7).
+5. Die Agent-Session erscheint im **ersten Terminal-Tab**. Er trägt den Namen des Agent-Typs (z. B. „Claude Code“) und lässt sich nicht schließen. Beendet wird sie per `/exit` bzw. `exit` in der PowerShell.
+6. `SessionStart` liefert die `session_id` von Claude. Sie wird als **Konversations-ID** gespeichert und für `--resume` gebraucht. Jedes weitere `SessionStart` (z. B. nach `/clear`) überschreibt sie.
 
 Hook-Settings (Skizze, Port `51234` als Beispiel):
 

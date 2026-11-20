@@ -15,7 +15,7 @@ Argus startet Claude Code mit `claude --settings <generierte-datei.json>`. Darin
 - **Der Port steht als Zahl in der `url`.** `$VAR` wird dort nicht aufgelöst. Argus schreibt die Datei deshalb bei jedem App-Start mit dem aktuellen Port neu.
 - **Die generierte Datei muss strikt gültig sein.** Ein ungültiger `PreToolUse`- oder `PermissionRequest`-Hook lässt Claude die **gesamte** `--settings`-Quelle verwerfen, und es kommt kein einziges Event an. Argus erzeugt die Datei deshalb aus Code, validiert sie mit zod und testet sie.
 - **Timeout klein halten (2–3 s).** Ein Hook-Server, der nicht antwortet, verzögert `UserPromptSubmit` und `SessionEnd` jeweils um das volle Timeout. Ein geschlossener Port kostet dagegen nichts.
-- **`CLAUDE*`-Umgebungsvariablen nicht vererben.** Startet Argus aus einer Claude-Session heraus (Entwicklung), erbt der neue Claude deren Variablen und speichert kein Transcript. Der Spike zeigte dazu die Meldung „Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker“. Dann funktioniert `--resume` nicht. Die Hooks selbst kommen trotzdem an.
+- **`CLAUDE*`-Umgebungsvariablen nicht vererben.** Startet Argus aus einer Claude-Session heraus (Entwicklung), erbt der neue Claude deren Variablen und speichert kein Transcript. Der Spike zeigte dazu die Meldung „Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker“. Dann funktioniert `--resume` nicht. Die Hooks selbst kommen trotzdem an. Argus entfernt deshalb alle `CLAUDE*`-Variablen (Name ohne Rücksicht auf Groß- und Kleinschreibung), **aber nur, wenn `CLAUDECODE` gesetzt ist**, Argus also selbst in einer Claude-Session läuft. Im Normalbetrieb bleiben eigene Einstellungen des Users wie `CLAUDE_CONFIG_DIR` erhalten. Eine feste Liste einzelner Marker wurde verworfen, weil neue Claude-Versionen weitere Marker einführen (#7).
 - Abbruch per Escape oder Strg+C erzeugt **kein** Hook-Event. Wie Argus ihn trotzdem erkennt, regelt [ADR 0005](0005-abbruch-ueber-tastendruck-und-terminal-titel.md).
 
 ## Ergebnisse des Spikes (Issue #1)
@@ -36,6 +36,7 @@ Geprüft mit Claude Code 2.1.329 unter Windows 10, `pwsh` 7 in node-pty/ConPTY, 
 | `/clear` | `SessionEnd` mit `reason: clear`, danach `SessionStart` mit `source: clear` und einer **neuen** `session_id`. |
 | `SessionStart` | HTTP-Hooks werden ohne Warnung ignoriert, laut Doku sind nur `command` und `mcp_tool` erlaubt. Ein `curl.exe`-Command-Hook funktioniert bei `startup`, `clear` und `resume`. Getestet sind `shell: powershell` und die Standard-Shell, gewählt wird `shell: powershell`, weil sie nicht von Git Bash abhängt. |
 | Start-Prompt mit Sonderzeichen | Kommt unverfälscht an, wenn er über `-EncodedCommand` als PowerShell-String in einfachen Anführungszeichen übergeben wird (`'` verdoppelt). Getestet mit `"`, `'`, `$HOME`, `${x}`, Umlauten, `€`, Backticks, `%`, `&`, `\|`, `<`, `>`. |
+| Start-Prompt, der mit `-` beginnt (Smoke-Test zu #7, nicht im Spike) | Ohne Weiteres startet Claude nicht: `error: unknown option '-x …'`. Mit `--` vor dem Prompt kommt er unverfälscht an. Argus setzt `--` deshalb immer vor den Start-Prompt. |
 
 Alle Zeiten sind Einzelmessungen (n=1). Sie zeigen Größenordnungen, keine Grenzwerte.
 

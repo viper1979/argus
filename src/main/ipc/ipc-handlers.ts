@@ -1,16 +1,19 @@
 import type { IpcContract } from '@shared/ipc/contract';
 import type { IpcHandlers } from '@shared/ipc/contract-types';
 import { app } from 'electron';
+import type { AgentSessionService } from '../agents/agent-session-service';
 import type { ProjectService } from '../projects/project-service';
 import type { SettingsService } from '../settings/settings-service';
 import type { TaskService } from '../tasks/task-service';
 import type { TerminalService } from '../terminals/terminal-service';
+import { AgentSessionTerminalCloseError } from './agent-session-terminal-close-error';
 
 /** Services the IPC handlers delegate to; created once at app start. */
 export interface IpcHandlerDependencies {
   readonly projectService: ProjectService;
   readonly taskService: TaskService;
   readonly terminalService: TerminalService;
+  readonly agentSessionService: AgentSessionService;
   readonly settingsService: SettingsService;
   /**
    * Shows the native folder picker.
@@ -26,8 +29,14 @@ export interface IpcHandlerDependencies {
  * @returns Handlers grouped by domain, matching {@link IpcContract}.
  */
 export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHandlers<IpcContract> {
-  const { projectService, taskService, terminalService, settingsService, pickFolder } =
-    dependencies;
+  const {
+    projectService,
+    taskService,
+    terminalService,
+    agentSessionService,
+    settingsService,
+    pickFolder,
+  } = dependencies;
 
   return {
     app: {
@@ -60,9 +69,17 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
         return {};
       },
       close: async ({ terminalId }) => {
+        // The renderer offers no close button for it; checked here, because the renderer is not
+        // trusted. The rejection is logged by registerIpcHandlers.
+        if (agentSessionService.isAgentSessionTerminal(terminalId)) {
+          throw new AgentSessionTerminalCloseError(terminalId);
+        }
         await terminalService.close(terminalId);
         return {};
       },
+    },
+    agentSession: {
+      start: (request) => agentSessionService.start(request),
     },
     settings: {
       get: () => settingsService.get(),

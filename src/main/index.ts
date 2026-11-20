@@ -1,11 +1,15 @@
-import { randomUUID } from 'node:crypto';
-import { access } from 'node:fs/promises';
-import { join } from 'node:path';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { access, mkdir, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ipcContract, ipcEventContract } from '@shared/ipc/contract';
 import { APP_COLORS } from '@shared/theme/app-colors';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions } from 'electron';
+import { createAgentSessionService } from './agents/agent-session-service';
+import { AGENT_TYPE_ADAPTERS } from './agents/agent-type-registry';
 import { createGitClient } from './git/git-client';
+import { startHookServer } from './hooks/hook-server';
+import { startAgentHooks } from './hooks/start-agent-hooks';
 import { createProcessGitRunner } from './git/process-git-runner';
 import { createIpcEventEmitter } from './ipc/create-ipc-event-emitter';
 import { createIpcHandlers } from './ipc/ipc-handlers';
@@ -111,6 +115,22 @@ const STATE_FILE_NAME = 'state.json';
 /** Exit code when the app cannot start, e.g. because an IPC handler is missing. */
 const STARTUP_FAILURE_EXIT_CODE = 1;
 
+/** Folder in userData for the hook settings files, `%APPDATA%\Argus\hooks` (concept 5.3). */
+const HOOKS_DIRECTORY_NAME = 'hooks';
+
+/** Random bytes of the hook token; 256 bits, hex-encoded for the header. */
+const HOOK_TOKEN_BYTES = 32;
+
+/**
+ * Writes a hook settings file, creating `%APPDATA%\Argus\hooks` on first use.
+ * @param path Absolute file path.
+ * @param content File content.
+ */
+async function writeHookSettingsFile(path: string, content: string): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, content, 'utf8');
+}
+
 /**
  * Shows the native folder picker attached to the main window.
  * @param title Title of the dialog.
@@ -178,6 +198,29 @@ async function startApp(): Promise<void> {
     ipcEventContract,
     () => mainWindowReference?.webContents ?? null,
   );
+
+  // Before the window: the hook settings file must carry the port of this app start before any
+  // agent session can be started (concept 5.3). A failure is logged and only blocks agent
+  // sessions, not the app.
+  const hookLogger = createConsoleLogger('hooks');
+  const agentHooks = await startAgentHooks({
+    adapters: Object.values(AGENT_TYPE_ADAPTERS),
+    hooksDirectory: join(app.getPath('userData'), HOOKS_DIRECTORY_NAME),
+    startHookServer,
+    writeFile: writeHookSettingsFile,
+    generateToken: () => randomBytes(HOOK_TOKEN_BYTES).toString('hex'),
+    onHookEvent: ({ agentType, agentSessionId, body }) => {
+      // Only logged until #8 interprets the events. Never the body: it holds prompts and
+      // tool output.
+      hookLogger.info('Hook event received', {
+        agentType,
+        agentSessionId,
+        bodyLength: body.length,
+      });
+    },
+    logger: hookLogger,
+  });
+
   const terminalLogger = createConsoleLogger('terminals');
   const terminalService = createTerminalService({
     spawnPty: createNodePtySpawner(),
@@ -189,10 +232,21 @@ async function startApp(): Promise<void> {
         ipcEvents.terminal.output({ terminalId, data });
       },
       exit: (terminalId, exitCode) => {
+        // Frees the task for a new agent session if this was its terminal. Only called once a
+        // terminal ran, which needs IPC, so agentSessionService is initialised by then.
+        agentSessionService.handleTerminalExit(terminalId);
         ipcEvents.terminal.exit({ terminalId, exitCode });
       },
     },
     logger: terminalLogger,
+  });
+  const agentSessionService = createAgentSessionService({
+    stateHolder,
+    terminalService,
+    adapters: AGENT_TYPE_ADAPTERS,
+    hooks: agentHooks,
+    generateId: randomUUID,
+    logger: createConsoleLogger('agent-sessions'),
   });
   closeTerminalsBeforeQuit(
     {
@@ -214,6 +268,7 @@ async function startApp(): Promise<void> {
       projectService,
       taskService,
       terminalService,
+      agentSessionService,
       settingsService,
       pickFolder,
     }),
