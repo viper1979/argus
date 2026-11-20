@@ -250,6 +250,7 @@ type TerminalSignal =
    - Den Befehl per `-EncodedCommand` übergeben, Start-Prompt und Pfad der Hook-Datei darin als Strings in einfachen Anführungszeichen (`'` verdoppeln). Im Spike kamen `"`, `'`, `$`, Umlaute und Backticks unverfälscht an. Ein leerer Start-Prompt gilt als keiner.
    - Vor dem Start-Prompt steht immer `--`. Sonst hält Claude einen Prompt, der mit `-` beginnt, für eine Option und startet nicht (`error: unknown option`, Smoke-Test zu #7).
 5. Die Agent-Session erscheint im **ersten Terminal-Tab**. Er trägt den Namen des Agent-Typs (z. B. „Claude Code“) und lässt sich nicht schließen. Beendet wird sie per `/exit` bzw. `exit` in der PowerShell.
+   - Beim ersten Task eines Repos fragt Claude, ob es dem Ordner vertraut. Die Frage beantworte ich im Terminal. Argus lässt die Claude-Konfiguration des Users unberührt ([ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md)) und trägt deshalb auch kein Vertrauen in `~/.claude.json` ein. Bei weiteren Tasks desselben Repos kam der Dialog nicht mehr: Claude speichert das Vertrauen offenbar pro Git-Repo, nicht pro Worktree. Im Smoke-Test zu #7 stand der Eintrag in `~/.claude.json` jeweils unter dem Pfad des Haupt-Repos, obwohl der Dialog im Worktree bestätigt wurde (2× beobachtet, nicht dokumentiert).
 6. `SessionStart` liefert die `session_id` von Claude. Sie wird als **Konversations-ID** gespeichert und für `--resume` gebraucht. Jedes weitere `SessionStart` (z. B. nach `/clear`) überschreibt sie.
 
 Hook-Settings (Skizze, Port `51234` als Beispiel):
