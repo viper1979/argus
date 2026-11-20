@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { isValidBranchName, isValidBranchPrefix } from './git-ref-name';
+import {
+  hasBranchNamed,
+  isBranchBlocked,
+  isValidBranchName,
+  isValidBranchPrefix,
+} from './git-ref-name';
 
 describe('isValidBranchName', () => {
   it.each(['main', 'master', 'release/2026.11', 'feature/3-projekte', 'agent/login_refactoring'])(
@@ -77,4 +82,56 @@ describe('isValidBranchPrefix', () => {
     // Assert
     expect(isValid).toBe(false);
   });
+});
+
+describe('isBranchBlocked', () => {
+  it.each([
+    ['same name', ['agent/login']],
+    ['same name in other case, e.g. a packed ref', ['Agent/Login']],
+    ['branch named like a parent segment', ['agent']],
+    ['parent segment in other case', ['AGENT']],
+    ['branch below the new one', ['agent/login/draft']],
+  ])('isBranchBlocked_WhenExistingBranchCollides_ReturnsTrue (%s)', (_reason, existingBranches) => {
+    // Arrange
+    // Git stores branches as files: on Windows `agent` and `Agent` are the same file, and
+    // `agent` cannot be a file and a folder at once.
+
+    // Act
+    const isBlocked = isBranchBlocked('agent/login', existingBranches);
+
+    // Assert
+    expect(isBlocked).toBe(true);
+  });
+
+  it('isBranchBlocked_WithOnlyUnrelatedBranches_ReturnsFalse', () => {
+    // Arrange
+    // `agent/login-2` and `agent/log` only share a text prefix, not a path segment.
+    const existingBranches = ['main', 'agent/login-2', 'agent/log', 'feature/agent/login'];
+
+    // Act
+    const isBlocked = isBranchBlocked('agent/login', existingBranches);
+
+    // Assert
+    expect(isBlocked).toBe(false);
+  });
+});
+
+describe('hasBranchNamed', () => {
+  it.each([
+    ['exact name', ['main', 'agent'], true],
+    ['other case, e.g. a packed ref', ['Agent'], true],
+    ['only branches below it, the normal case for a prefix', ['agent/login'], false],
+  ])(
+    'hasBranchNamed_WithExistingBranches_ReportsWhetherOneHasTheName (%s)',
+    (_reason, existingBranches, expected) => {
+      // Arrange
+      // The existing branches come from the test table.
+
+      // Act
+      const hasBranch = hasBranchNamed('agent', existingBranches);
+
+      // Assert
+      expect(hasBranch).toBe(expected);
+    },
+  );
 });

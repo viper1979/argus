@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import type { GitClient } from '../git/git-client';
 import { GitUnavailableError } from '../git/git-unavailable-error';
-import { createEmptyAppState, type AppState } from '../persistence/app-state';
 import { createAppStateHolder } from '../persistence/app-state-holder';
-import type { StateStore } from '../persistence/state-store';
-import { createProjectService, type ProjectService } from './project-service';
+import { FakeStateStore } from '../persistence/testing/fake-state-store';
+import {
+  createProjectService,
+  type ProjectGitClient,
+  type ProjectService,
+} from './project-service';
 
 /** Fixed id so that created projects can be compared with literals. */
 const PROJECT_ID = '6f1c2b8e-1d2a-4c3b-9e4f-5a6b7c8d9e0f';
@@ -12,24 +14,8 @@ const PROJECT_ID = '6f1c2b8e-1d2a-4c3b-9e4f-5a6b7c8d9e0f';
 /** Id of a second project in tests with two projects. */
 const OTHER_PROJECT_ID = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
 
-/** In-memory stand-in for `state.json` that remembers what was saved last. */
-class FakeStateStore implements StateStore {
-  savedState: AppState | null = null;
-
-  /** Returns the last saved state, or an empty one like a fresh installation. */
-  load(): Promise<AppState> {
-    return Promise.resolve(this.savedState ?? createEmptyAppState());
-  }
-
-  /** Remembers the state instead of writing a file. */
-  save(state: AppState): Promise<void> {
-    this.savedState = state;
-    return Promise.resolve();
-  }
-}
-
 /** Stand-in for git that knows a fixed set of repositories. */
-class FakeGitClient implements GitClient {
+class FakeGitClient implements ProjectGitClient {
   /** Repository root per folder path; folders not listed are no repository. */
   readonly repositoryRoots = new Map<string, string>();
   mainBranch = 'main';

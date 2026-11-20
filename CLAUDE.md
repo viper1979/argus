@@ -49,7 +49,7 @@ Ein neuer Fachbegriff oder eine geänderte Bedeutung wird im selben Change in `G
 - **Claude-Hooks ausschließlich über die generierte `--settings`-Datei** mit HTTP-Hooks, nur `SessionStart` als `curl.exe`-Command-Hook; die Claude-Konfiguration des Users (`~/.claude/`) bleibt unberührt (ADR 0003). Ein Abbruch per Escape/Strg+C wird über Tastendruck + Terminal-Titel erkannt (ADR 0005).
 - **Prozessgrenzen:** Der Main-Prozess besitzt PTYs, Git, Hook-Server und Persistenz. Der Renderer läuft mit `contextIsolation` ohne Node-Zugriff und spricht nur über die typisierte Preload-API; jede IPC-Nachricht und jeder Hook-Payload wird mit zod validiert.
 - **Agent-Typ-neutraler Kern:** Alles Claude-Spezifische (Startbefehl, Resume, Hook-Konfiguration, Event→Status, Terminal-Signal→Status) lebt im `AgentTypeAdapter` für Claude Code, damit Codex ohne Umbau des Kerns andockt.
-- **Branches löschen mit `git branch -d`.** `git branch -D` nur nach ausdrücklicher Bestätigung durch den User in der UI (Ablauf „Task entfernen“ im Konzept).
+- **Branches löschen mit `git branch -d`.** `git branch -D` nur nach ausdrücklicher Bestätigung durch den User in der UI (Ablauf „Task entfernen“ im Konzept). Einzige Ausnahme: Scheitert das Anlegen eines Tasks (`git worktree add` oder danach das Speichern), löscht Argus den Task-Branch mit `git update-ref -d <ref> <startcommit>`. Das löscht nur, solange der Branch noch auf dem Startcommit steht. Eigene Commits gehen so nie verloren. Hat Argus den Worktree nicht entfernen können, bleibt auch der Branch stehen (Konzept 5.2).
 
 ## Tests
 

@@ -11,9 +11,9 @@ import { GitUnavailableError } from './git-unavailable-error';
 export function createProcessGitRunner(): GitRunner {
   return (args, cwd) =>
     new Promise<GitResult>((resolve, reject) => {
-      execFile('git', args, { cwd, windowsHide: true }, (error, stdout) => {
+      execFile('git', args, { cwd, windowsHide: true }, (error, stdout, stderr) => {
         if (error === null) {
-          resolve({ exitCode: GIT_SUCCESS, stdout });
+          resolve({ exitCode: GIT_SUCCESS, stdout, stderr });
           return;
         }
         const exitCode = readExitCode(error);
@@ -21,7 +21,7 @@ export function createProcessGitRunner(): GitRunner {
           reject(new GitUnavailableError(error));
           return;
         }
-        resolve({ exitCode, stdout });
+        resolve({ exitCode, stdout, stderr });
       });
     });
 }

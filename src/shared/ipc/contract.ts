@@ -6,6 +6,7 @@ import {
   updateProjectResultSchema,
 } from '../domain/project';
 import { settingsSchema } from '../domain/settings';
+import { createTaskRequestSchema, createTaskResultSchema, taskSchema } from '../domain/task';
 import type { IpcClientApi, IpcContractShape } from './contract-types';
 
 /**
@@ -46,6 +47,17 @@ export const ipcContract = {
     remove: {
       request: z.object({ projectId: z.uuid() }).strict(),
       response: z.object({}),
+    },
+  },
+  task: {
+    list: {
+      request: z.object({}).strict(),
+      response: z.object({ tasks: z.array(taskSchema) }),
+    },
+    /** Creates worktree and branch, then saves the task (concept 5.2, steps 1 to 3). */
+    create: {
+      request: createTaskRequestSchema.strict(),
+      response: createTaskResultSchema,
     },
   },
   settings: {

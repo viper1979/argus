@@ -1,12 +1,12 @@
-import { useId, useState } from 'react';
-import { isValidBranchName, isValidBranchPrefix } from '@shared/domain/git-ref-name';
-import type {
-  AgentType,
-  Project,
-  ProjectSettings,
-  UpdateProjectResult,
-} from '@shared/domain/project';
+import { useState } from 'react';
+import {
+  INVALID_BRANCH_NAME_MESSAGE,
+  isValidBranchName,
+  isValidBranchPrefix,
+} from '@shared/domain/git-ref-name';
+import type { Project, ProjectSettings, UpdateProjectResult } from '@shared/domain/project';
 import { isValidWindowsFolderName } from '@shared/domain/windows-folder-name';
+import { FormField } from '@renderer/components/forms/form-field';
 import { Button } from '@renderer/components/ui/button';
 import {
   Dialog,
@@ -17,13 +17,8 @@ import {
   DialogTitle,
 } from '@renderer/components/ui/dialog';
 import { Input } from '@renderer/components/ui/input';
-import { Label } from '@renderer/components/ui/label';
 import { Textarea } from '@renderer/components/ui/textarea';
-
-/** Display names of the agent types; only Claude Code exists in the MVP. */
-const AGENT_TYPE_LABELS: Record<AgentType, string> = {
-  'claude-code': 'Claude Code',
-};
+import { AGENT_TYPE_LABELS } from '@renderer/lib/agent-type-labels';
 
 /** German message per reason why the settings could not be saved. */
 const UPDATE_FAILURE_MESSAGES: Record<
@@ -90,7 +85,7 @@ function validateProjectSettings(values: {
       'Der Name wird zum Ordnernamen: nicht leer, ohne \\ / : * ? " < > | und nicht mit Punkt oder Leerzeichen am Ende.';
   }
   if (!isValidBranchName(values.mainBranch)) {
-    errors.mainBranch = 'Kein gültiger Branch-Name.';
+    errors.mainBranch = INVALID_BRANCH_NAME_MESSAGE;
   }
   if (!isValidBranchPrefix(values.branchPrefix)) {
     errors.branchPrefix =
@@ -219,27 +214,5 @@ function ProjectSettingsForm(
         </Button>
       </DialogFooter>
     </form>
-  );
-}
-
-interface FormFieldProps {
-  readonly label: string;
-  /** Validation message shown below the field; `undefined` while the value is valid. */
-  readonly error?: string | undefined;
-  /** Renders the input; receives the id that connects it with the label. */
-  readonly children: (id: string) => React.ReactNode;
-}
-
-/** Label, input and optional validation message of one form field. */
-function FormField(props: FormFieldProps): React.JSX.Element {
-  const { label, error, children } = props;
-  const id = useId();
-
-  return (
-    <div className="grid content-start gap-2">
-      <Label htmlFor={id}>{label}</Label>
-      {children(id)}
-      {error && <p className="text-xs text-destructive">{error}</p>}
-    </div>
   );
 }

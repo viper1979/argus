@@ -25,6 +25,7 @@ Begriffe: [Glossar](../GLOSSARY.md) · Entscheidungen: [docs/adr](adr/)
 | Orchestrierung | Nur ich starte Agent-Sessions; Subagents der Agents sind erlaubt | – |
 | Lebensdauer | Terminals enden mit der App, Agent-Sessions sind per `--resume` fortsetzbar | [ADR 0004](adr/0004-kein-hintergrunddienst-fuer-terminals.md) |
 | Git-Abschluss | Argus macht kein Commit, Push oder PR; das erledigt die Agent-Session oder ich | – |
+| Git-Konfiguration | Argus ändert keine Repo-Config; `push.autoSetupRemote` kommt per Umgebung in die Terminals des Tasks | [ADR 0006](adr/0006-push-autosetupremote-per-umgebung.md) |
 
 ## 2. Domänenmodell
 
@@ -51,6 +52,7 @@ classDiagram
       Basis-Branch
       Worktree-Pfad
       Start-Prompt
+      Agent-Typ der ersten Agent-Session
     }
     class AgentSession {
       Agent-Typ
@@ -212,7 +214,9 @@ type TerminalSignal =
    - Namen gelöschter Tasks werden **nicht wiederverwendet**: Claude speichert Konversationen pro Pfad
 2. `git fetch` für den Basis-Branch, dann:
    `git worktree add --no-track -b <präfix>/<task-name> <pfad> <basis>`
-3. `git config push.autoSetupRemote true` im Worktree, Basis-Branch im Task speichern
+3. Task mit Basis-Branch, Start-Prompt und Agent-Typ in `state.json` speichern, erst nachdem der Git-Teil gelungen ist
+   - Scheitert `git worktree add` oder das Speichern, nimmt Argus zurück, was Git schon angelegt hat: zuerst den Worktree, dann den Branch per `git update-ref -d <ref> <startcommit>`. Gelöscht wird nur, solange der Branch noch auf dem Startcommit steht (Ausnahme zur Leitplanke in `CLAUDE.md`).
+   - `push.autoSetupRemote` schreibt Argus **nicht** in die Repo-Config. Jedes Terminal des Tasks bekommt den Wert per `GIT_CONFIG_*`-Umgebung ([ADR 0006](adr/0006-push-autosetupremote-per-umgebung.md)).
 4. Ist ein Setup-Skript vorhanden: Es läuft **sichtbar** im ersten Terminal, mit `ARGUS_ROOT_PATH` (Haupt-Repo) und `ARGUS_WORKTREE_PATH` (Worktree) in der Umgebung. Die Agent-Session startet erst, wenn das Setup beendet ist.
    - Endet das Setup mit Fehler (Exit-Code ≠ 0), kommt die Rückfrage **„Setup fehlgeschlagen. Agent-Session trotzdem starten?“**. Die Ausgabe des Setups bleibt im Terminal sichtbar.
 5. Agent-Session starten (siehe 5.3)
