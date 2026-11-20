@@ -9,7 +9,9 @@ import { CreateTaskDialog } from '@renderer/components/tasks/create-task-dialog'
 import { Button } from '@renderer/components/ui/button';
 import { useAppInfo } from '@renderer/hooks/use-app-info';
 import { useProjects } from '@renderer/hooks/use-projects';
-import { useTasks } from '@renderer/hooks/use-tasks';
+import type { TasksState } from '@renderer/hooks/use-tasks';
+import { cn } from '@renderer/lib/utils';
+import { taskViewStore } from '@renderer/stores/task-view-store';
 
 /** German message per reason why a folder could not be added. */
 const ADD_PROJECT_FAILURE_MESSAGES: Record<
@@ -29,13 +31,15 @@ const UNEXPECTED_ADD_ERROR_MESSAGE = 'Das Projekt konnte nicht hinzugefügt werd
 const UNEXPECTED_REMOVE_ERROR_MESSAGE = 'Das Projekt konnte nicht entfernt werden.';
 
 interface ProjectTaskListProps {
-  /** Tasks of one project, or `null` while the tasks are loading (as in {@link useTasks}). */
+  /** Tasks of one project, or `null` while the tasks are loading (as in {@link TasksState}). */
   readonly tasks: Task[] | null;
+  /** Task shown in the main area; highlighted in the list. */
+  readonly selectedTaskId: string | null;
 }
 
-/** The tasks below one project heading; opening a task follows with the task view (#5). */
+/** The tasks below one project heading; a click opens the task view. */
 function ProjectTaskList(props: ProjectTaskListProps): React.JSX.Element | null {
-  const { tasks } = props;
+  const { tasks, selectedTaskId } = props;
   if (tasks === null) {
     return null;
   }
@@ -45,24 +49,41 @@ function ProjectTaskList(props: ProjectTaskListProps): React.JSX.Element | null 
   return (
     <ul>
       {tasks.map((task) => (
-        <li
-          key={task.id}
-          className="flex items-center gap-2 rounded-md px-2 py-1"
-          title={`${task.branch}\n${task.worktreePath}`}
-        >
-          <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-          <span className="truncate">{task.name}</span>
+        <li key={task.id}>
+          <button
+            type="button"
+            aria-current={task.id === selectedTaskId ? 'true' : undefined}
+            className={cn(
+              'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-sidebar-accent',
+              task.id === selectedTaskId && 'bg-sidebar-accent text-sidebar-accent-foreground',
+            )}
+            title={`${task.branch}\n${task.worktreePath}`}
+            onClick={() => {
+              taskViewStore.getState().selectTask(task.id);
+            }}
+          >
+            <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="truncate">{task.name}</span>
+          </button>
         </li>
       ))}
     </ul>
   );
 }
 
+interface SidebarProps {
+  /** Tasks of all projects and the action to create one; owned by the app root. */
+  readonly tasksState: TasksState;
+  /** Task shown in the main area. */
+  readonly selectedTaskId: string | null;
+}
+
 /** Left navigation column: projects as groups with their tasks. */
-export function Sidebar(): React.JSX.Element {
+export function Sidebar(props: SidebarProps): React.JSX.Element {
+  const { tasksState, selectedTaskId } = props;
+  const { tasks, createTask } = tasksState;
   const appInfo = useAppInfo();
   const { projects, addProject, updateProject, removeProject } = useProjects();
-  const { tasks, createTask } = useTasks();
   const [projectForNewTask, setProjectForNewTask] = useState<Project | null>(null);
   const [editedProject, setEditedProject] = useState<Project | null>(null);
   const [projectToRemove, setProjectToRemove] = useState<Project | null>(null);
@@ -161,6 +182,7 @@ export function Sidebar(): React.JSX.Element {
             </div>
             <ProjectTaskList
               tasks={tasks && tasks.filter((task) => task.projectId === project.id)}
+              selectedTaskId={selectedTaskId}
             />
           </section>
         ))}

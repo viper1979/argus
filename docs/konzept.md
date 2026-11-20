@@ -26,6 +26,7 @@ Begriffe: [Glossar](../GLOSSARY.md) · Entscheidungen: [docs/adr](adr/)
 | Lebensdauer | Terminals enden mit der App, Agent-Sessions sind per `--resume` fortsetzbar | [ADR 0004](adr/0004-kein-hintergrunddienst-fuer-terminals.md) |
 | Git-Abschluss | Argus macht kein Commit, Push oder PR; das erledigt die Agent-Session oder ich | – |
 | Git-Konfiguration | Argus ändert keine Repo-Config; `push.autoSetupRemote` kommt per Umgebung in die Terminals des Tasks | [ADR 0006](adr/0006-push-autosetupremote-per-umgebung.md) |
+| Terminal-Streams | Ausgabe und Prozessende als IPC-Events, Eingabe per `invoke`; der Inhalt lebt in xterm.js-Instanzen im Renderer, die beim Task-Wechsel weiterlaufen | [ADR 0007](adr/0007-terminal-streams-per-ipc-events-und-xterm-im-renderer.md) |
 
 ## 2. Domänenmodell
 

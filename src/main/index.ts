@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ipcContract } from '@shared/ipc/contract';
+import { ipcContract, ipcEventContract } from '@shared/ipc/contract';
 import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
 import { createGitClient } from './git/git-client';
 import { createProcessGitRunner } from './git/process-git-runner';
+import { createIpcEventEmitter } from './ipc/create-ipc-event-emitter';
 import { createIpcHandlers } from './ipc/ipc-handlers';
 import { registerIpcHandlers } from './ipc/register-ipc-handlers';
 import { createConsoleLogger } from './logging/console-logger';
@@ -14,6 +15,9 @@ import { createAppStateHolder } from './persistence/app-state-holder';
 import { createStateStore } from './persistence/state-store';
 import { createProjectService } from './projects/project-service';
 import { createTaskService } from './tasks/task-service';
+import { createNodePtySpawner } from './terminals/node-pty-spawner';
+import { closeTerminalsBeforeQuit } from './terminals/close-terminals-before-quit';
+import { createTerminalService } from './terminals/terminal-service';
 
 const MAIN_WINDOW_WIDTH = 1280;
 const MAIN_WINDOW_HEIGHT = 800;
@@ -137,10 +141,49 @@ function startApp(): void {
     logger: createConsoleLogger('tasks'),
   });
 
+  const ipcEvents = createIpcEventEmitter(
+    ipcEventContract,
+    () => mainWindowReference?.webContents ?? null,
+  );
+  const terminalLogger = createConsoleLogger('terminals');
+  const terminalService = createTerminalService({
+    spawnPty: createNodePtySpawner(),
+    stateHolder,
+    processEnv: process.env,
+    generateId: randomUUID,
+    events: {
+      output: (terminalId, data) => {
+        ipcEvents.terminal.output({ terminalId, data });
+      },
+      exit: (terminalId, exitCode) => {
+        ipcEvents.terminal.exit({ terminalId, exitCode });
+      },
+    },
+    logger: terminalLogger,
+  });
+  closeTerminalsBeforeQuit(
+    {
+      onBeforeQuit: (listener) => {
+        app.on('before-quit', listener);
+      },
+      quit: () => {
+        app.quit();
+      },
+    },
+    terminalService,
+    terminalLogger,
+  );
+
   registerIpcHandlers({
     ipcMain,
     contract: ipcContract,
-    handlers: createIpcHandlers({ projectService, taskService, stateHolder, pickFolder }),
+    handlers: createIpcHandlers({
+      projectService,
+      taskService,
+      terminalService,
+      stateHolder,
+      pickFolder,
+    }),
     logger: createConsoleLogger('ipc'),
     allowedRendererUrl: resolveRendererUrl(),
   });

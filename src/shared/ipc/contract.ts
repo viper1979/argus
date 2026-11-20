@@ -7,7 +7,21 @@ import {
 } from '../domain/project';
 import { settingsSchema } from '../domain/settings';
 import { createTaskRequestSchema, createTaskResultSchema, taskSchema } from '../domain/task';
-import type { IpcClientApi, IpcContractShape } from './contract-types';
+import {
+  openTerminalRequestSchema,
+  openTerminalResultSchema,
+  resizeTerminalRequestSchema,
+  terminalExitEventSchema,
+  terminalOutputEventSchema,
+  terminalReferenceSchema,
+  writeTerminalRequestSchema,
+} from '../domain/terminal';
+import type {
+  IpcClientApi,
+  IpcContractShape,
+  IpcEventApi,
+  IpcEventContractShape,
+} from './contract-types';
 
 /**
  * Central IPC contract between renderer and main process.
@@ -60,6 +74,28 @@ export const ipcContract = {
       response: createTaskResultSchema,
     },
   },
+  terminal: {
+    /** Starts a PowerShell in the worktree of the task (issue #5). */
+    open: {
+      request: openTerminalRequestSchema.strict(),
+      response: openTerminalResultSchema,
+    },
+    /** Forwards keystrokes; input for an ended terminal is dropped. */
+    write: {
+      request: writeTerminalRequestSchema.strict(),
+      response: z.object({}),
+    },
+    /** Applies the size xterm.js measured; ignored for an ended terminal. */
+    resize: {
+      request: resizeTerminalRequestSchema.strict(),
+      response: z.object({}),
+    },
+    /** Ends the process and resolves once it has ended. */
+    close: {
+      request: terminalReferenceSchema.strict(),
+      response: z.object({}),
+    },
+  },
   settings: {
     get: {
       request: z.object({}).strict(),
@@ -72,11 +108,26 @@ export const ipcContract = {
   },
 } as const satisfies IpcContractShape;
 
+/**
+ * Events the main process pushes to the renderer; channel names are derived as `domain:event`.
+ * Event names must differ from the action names of the same domain, since both end up on
+ * `window.argus.<domain>`.
+ */
+export const ipcEventContract = {
+  terminal: {
+    output: terminalOutputEventSchema,
+    exit: terminalExitEventSchema,
+  },
+} as const satisfies IpcEventContractShape;
+
 /** Property of `window` under which the preload exposes {@link ArgusApi}. */
 export const ARGUS_BRIDGE_KEY = 'argus';
 
 /** The contract type, used to derive handler and client signatures. */
 export type IpcContract = typeof ipcContract;
 
-/** API exposed to the renderer as `window.argus`. */
-export type ArgusApi = IpcClientApi<IpcContract>;
+/** The event contract type, used to derive emitter and subscription signatures. */
+export type IpcEventContract = typeof ipcEventContract;
+
+/** API exposed to the renderer as `window.argus`: invoke methods and event subscriptions. */
+export type ArgusApi = IpcClientApi<IpcContract> & IpcEventApi<IpcEventContract>;

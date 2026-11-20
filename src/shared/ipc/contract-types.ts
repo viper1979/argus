@@ -42,6 +42,49 @@ export type IpcHandlers<TContract extends IpcContractShape> = {
   };
 };
 
+/**
+ * Shape every event contract must follow: domain → event → payload schema.
+ * Events flow only from main to renderer (e.g. terminal output); the renderer never sends one.
+ */
+export type IpcEventContractShape = Readonly<Record<string, Readonly<Record<string, z.ZodType>>>>;
+
+/** Event names of one domain in an event contract. */
+type IpcEventName<
+  TEvents extends IpcEventContractShape,
+  TDomain extends keyof TEvents,
+> = keyof TEvents[TDomain] & string;
+
+/** Payload of an event, as the renderer receives it. */
+type EventPayloadOf<
+  TEvents extends IpcEventContractShape,
+  TDomain extends keyof TEvents,
+  TEvent extends IpcEventName<TEvents, TDomain>,
+> = z.output<TEvents[TDomain][TEvent]>;
+
+/** Stops a subscription; calling it more than once does nothing. */
+export type IpcUnsubscribe = () => void;
+
+/** Name of the subscribe method of an event, e.g. `output` → `onOutput`. */
+export type IpcSubscribeMethodName<TEvent extends string> = `on${Capitalize<TEvent>}`;
+
+/** Subscriptions the renderer sees: `api.<domain>.on<Event>(listener)`. */
+export type IpcEventApi<TEvents extends IpcEventContractShape> = {
+  readonly [TDomain in keyof TEvents]: {
+    readonly [TEvent in IpcEventName<TEvents, TDomain> as IpcSubscribeMethodName<TEvent>]: (
+      listener: (payload: EventPayloadOf<TEvents, TDomain, TEvent>) => void,
+    ) => IpcUnsubscribe;
+  };
+};
+
+/** Typed sender the main process uses: `emitter.<domain>.<event>(payload)`. */
+export type IpcEventEmitter<TEvents extends IpcEventContractShape> = {
+  readonly [TDomain in keyof TEvents]: {
+    readonly [TEvent in IpcEventName<TEvents, TDomain>]: (
+      payload: z.input<TEvents[TDomain][TEvent]>,
+    ) => void;
+  };
+};
+
 /** Electron channel name of an endpoint, always in the form `domain:action`. */
 export type IpcChannel = `${string}:${string}`;
 
