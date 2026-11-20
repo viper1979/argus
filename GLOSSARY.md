@@ -27,7 +27,7 @@ Eine von dir gestartete Konversation eines Agent-Typs innerhalb eines Tasks. Sie
 _Avoid_: Agent, Run, Prozess, Chat
 
 **Subagent**:
-Ein Agent, den eine Agent-Session selbst startet. Argus startet oder steuert ihn nicht, er zählt ihn nur.
+Ein Agent, den eine Agent-Session selbst startet. Argus startet oder steuert ihn nicht, er zählt ihn nur. Claude-interne Hilfsagents, die ohne `SubagentStart` enden, sind keine Subagents.
 _Avoid_: Worker, Child-Agent
 
 ## Status einer Agent-Session

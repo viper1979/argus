@@ -23,6 +23,6 @@ Erscheint innerhalb eines kurzen Fensters (5 s) nach dem Tastendruck der Leerlau
 
 ## Consequences
 
-- Gemessen: Der Leerlauf-Titel kommt 24–77 ms nach dem Tastendruck, in der Denkphase genauso wie während eines laufenden Tools.
-- Die Glyphen sind Claude-spezifisch. Erkennung und Fenster leben deshalb im `AgentTypeAdapter` für Claude Code. Der `TerminalService` liefert nur Rohsignale (Eingabe, Titel).
+- Gemessen: Der Leerlauf-Titel kam 24–77 ms nach dem Tastendruck, in der Denkphase genauso wie während eines laufenden Tools. Das sind Einzelmessungen pro Fall.
+- Die Glyphen sind Claude-spezifisch. Erkennung und Fenster leben deshalb im `AgentTypeAdapter` für Claude Code. Der `TerminalService` liefert nur Terminal-Signale (Eingabe, Titel).
 - Ändert Claude Code die Titel-Glyphen, fällt die Erkennung still aus, und der Status bleibt bis zum nächsten Hook-Event auf **Arbeitet**. Die Glyphen gehören deshalb in eine Konstante mit Test.

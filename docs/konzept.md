@@ -83,14 +83,14 @@ stateDiagram-v2
     Arbeitet --> Bereit: Abbruch (Escape/Strg+C + Titel ✳)
     Arbeitet --> Fehler: StopFailure
     Fehler --> Arbeitet: UserPromptSubmit
-    Bereit --> Beendet: SessionEnd
-    Fehler --> Beendet: SessionEnd
-    Wartet --> Beendet: SessionEnd
-    Arbeitet --> Beendet: SessionEnd
+    Bereit --> Beendet: SessionEnd (außer clear)
+    Fehler --> Beendet: SessionEnd (außer clear)
+    Wartet --> Beendet: SessionEnd (außer clear)
+    Arbeitet --> Beendet: SessionEnd (außer clear)
     Beendet --> Bereit: Fortsetzen (--resume, SessionStart)
 ```
 
-Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemessen nach etwa 0,3 s. **Bereit** ist dann nur ein kurzer Zwischenstand und löst keinen Toast aus.
+Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemessen nach etwa 0,3 s. **Bereit** ist dann nur ein kurzer Zwischenstand. Toasts gibt es deshalb nur beim Übergang *aus* **Arbeitet** oder **Wartet**. **Bereit** nach `SessionStart` löst keinen Toast aus.
 
 | Status | Bedeutung | Darstellung |
 |---|---|---|
@@ -103,12 +103,12 @@ Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemess
 ### Regeln für die Auswertung (Lehren aus Orca)
 
 1. **Subagents verfälschen den Status nicht.** Events mit `agent_id` (also von Subagents) ändern den Status der Agent-Session nicht. `SubagentStart` und `SubagentStop` erhöhen bzw. senken nur den Zähler. Das Ende eines Subagents setzt die Agent-Session nie auf **Bereit**.
-   - Der Zähler führt eine **Menge von `agent_id`s**. `SubagentStop` entfernt nur IDs, deren `SubagentStart` er gesehen hat. Claude meldet nach fast jedem `Stop` ein `SubagentStop` interner Agents (leerer `agent_type`, kein `SubagentStart`). Ein einfacher Zähler würde dadurch negativ.
+   - Der Zähler führt eine **Menge von `agent_id`s**. `SubagentStop` entfernt nur IDs, deren `SubagentStart` er gesehen hat. Nach Turns mit Tool- oder Subagent-Aufrufen meldet Claude ein `SubagentStop` Claude-interner Hilfsagents (leerer `agent_type`, kein `SubagentStart`). Diese zählen nicht als Subagent, und ein einfacher Zähler würde dadurch negativ.
    - Subagents laufen asynchron. Der Haupt-Agent meldet `Stop` (→ **Bereit**), *während* der Subagent noch läuft. Dessen Ergebnis kommt als synthetisches `UserPromptSubmit` (`<agent-message …>`) zurück, also **Arbeitet**, gefolgt von einem zweiten `Stop`. Der Zähler in der Sidebar zeigt, dass noch Subagents laufen.
 2. **„Wartet“ ist sticky.** Ein `PreToolUse` eines anderen Tools oder Subagents hebt **Wartet** nicht auf. Erst `PostToolUse`/`PostToolUseFailure` des Haupt-Agents, ein neuer Prompt oder `Stop` lösen es auf.
 3. **`AskUserQuestion`** kommt als `PreToolUse` an, bedeutet aber **Wartet**.
 4. **Abbruch durch mich** (Escape bzw. Strg+C): Claude sendet *kein* Event. Argus erkennt den Abbruch am Tastendruck plus Leerlauf-Glyphe `✳` im Terminal-Titel und setzt **Bereit** ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)). Ein offenes `PreToolUse` bleibt dabei ohne `PostToolUse`. Ob das auch aus **Wartet** heraus greift, ist noch ungetestet.
-5. **Beendet** wird über `SessionEnd` erkannt. Das kommt zuverlässig bei `/exit` und bei zweimal Strg+C (`reason: prompt_input_exit`). Das PTY selbst endet nicht, weil die PowerShell mit `-NoExit` weiterläuft.
+5. **Beendet** wird über `SessionEnd` erkannt. Das kommt bei `/exit` und bei zweimal Strg+C im Leerlauf (`reason: prompt_input_exit`). Ein `/exit`, das *während* der Arbeit eingegeben wird, führt Claude nicht aus. Endet die PTY (z. B. beim Schließen der App), kommt `SessionEnd` mit `reason: other`. Das PTY selbst endet bei `/exit` nicht, weil die PowerShell mit `-NoExit` weiterläuft.
 6. **`/clear`** meldet `SessionEnd` (`reason: clear`) und sofort `SessionStart` (`source: clear`) mit einer **neuen** `session_id`. Die Agent-Session bleibt dieselbe: Status **Bereit**, Subagent-Zähler leeren, neue Konversations-ID merken. Ein `SessionEnd` mit `reason: clear` führt deshalb **nicht** zu **Beendet**.
 
 ## 4. Architektur
@@ -181,13 +181,18 @@ interface AgentTypeAdapter {
   buildStartCommand(context: AgentLaunchContext): string;
   /** Builds the shell command that resumes an existing conversation. */
   buildResumeCommand(context: AgentLaunchContext, conversationId: string): string;
-  /** Builds the content of the hook settings file for the given hook server port. */
-  buildHookSettings(port: number): unknown;
+  /** Builds the hook settings file content for the given hook server port; validated with zod before writing. */
+  buildHookSettings(port: number): HookSettingsFile;
   /** Translates a raw hook payload into a status event, or null if irrelevant. */
   interpretHookEvent(payload: unknown): AgentStatusEvent | null;
-  /** Translates terminal evidence (key press, title change) into a status event, e.g. an interrupt. */
-  interpretTerminalEvidence(evidence: TerminalEvidence): AgentStatusEvent | null;
+  /** Translates a terminal signal (key press, title change) into a status event, e.g. an interrupt. */
+  interpretTerminalSignal(signal: TerminalSignal): AgentStatusEvent | null;
 }
+
+/** Raw signal from the PTY, forwarded by the TerminalService. */
+type TerminalSignal =
+  | { kind: 'input'; data: string; at: number }
+  | { kind: 'title'; title: string; at: number };
 ```
 
 ## 5. Abläufe
@@ -214,11 +219,13 @@ interface AgentTypeAdapter {
 
 ### 5.3 Agent-Session starten bzw. fortsetzen
 
-1. Eine Agent-Session-ID erzeugen. Die Hook-Settings-Datei `%APPDATA%\Argus\hooks\claude-code.json` schreibt Argus **bei jedem App-Start** mit dem aktuellen Port des Hook-Servers. Es ist eine Datei für alle Agent-Sessions: Token und Agent-Session-ID kommen über Header aus Umgebungsvariablen, der Port steht als Zahl in der URL (`$VAR` wird in der `url` nicht aufgelöst).
+**Vorab, bei jedem App-Start:** Argus schreibt die Hook-Settings-Datei `%APPDATA%\Argus\hooks\claude-code.json` mit dem aktuellen Port des Hook-Servers. Es ist eine Datei für alle Agent-Sessions. Token und Agent-Session-ID kommen über Header aus Umgebungsvariablen, der Port steht als Zahl in der URL, weil `$VAR` in der `url` nicht aufgelöst wird.
+
+1. Eine Agent-Session-ID erzeugen.
 2. PTY starten: `pwsh -NoExit` (Fallback `powershell.exe`), `cwd` = Worktree. Umgebungsvariablen setzen:
    - `ARGUS_TOKEN`
    - `ARGUS_SESSION_ID`
-   - Geerbte `CLAUDE*`-Variablen **entfernen**. Sonst läuft Claude als Child-Session ohne Transcript, und `--resume` funktioniert nicht.
+   - Geerbte `CLAUDE*`-Variablen **entfernen**. Sonst erbt Claude die Variablen einer umgebenden Claude-Session, speichert kein Transcript, und `--resume` funktioniert nicht.
 3. Befehl: `claude --settings <hook-datei> ['<start-prompt>']`
    - Fortsetzen: `claude --settings <hook-datei> --resume <konversations-id>`
    - Den Befehl per `-EncodedCommand` übergeben, den Start-Prompt darin als String in einfachen Anführungszeichen (`'` verdoppeln). Im Spike kamen `"`, `'`, `$`, Umlaute und Backticks unverfälscht an.
@@ -343,7 +350,7 @@ Der Spike zu Issue #1 (Node + node-pty + Hook-Server, ohne Electron; Code auf Br
 - [x] Werden `$VAR` in `url` und `headers` aufgelöst? → **Nur in `headers`.** Der Port steht deshalb als Zahl in der URL.
 - [x] Ist bei Hook-Events von Subagents `agent_id` gesetzt? → **Ja.** Interne Agents senden aber `SubagentStop` ohne `SubagentStart` (Regel 1).
 - [x] Welches Event kommt beim Abbruch per Escape? → **Keins**, auch bei Strg+C nicht. Erkennung über den Terminal-Titel ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)).
-- [x] Kommt `SessionEnd` zuverlässig, auch bei `/exit` und Strg+C? → **Ja**, mit `reason: prompt_input_exit`.
+- [x] Kommt `SessionEnd` zuverlässig, auch bei `/exit` und Strg+C? → **Im Leerlauf ja**, mit `reason: prompt_input_exit`. Ein `/exit` während der Arbeit wird nicht ausgeführt. Endet die PTY, kommt `reason: other`.
 - [ ] node-pty mit ConPTY in Electron unter Windows: Rendering, Resize, Umlaute → nicht Teil des Spikes, das prüft das Grundgerüst
 - [x] Start-Prompt mit Sonderzeichen sicher übergeben → `-EncodedCommand` mit String in einfachen Anführungszeichen funktioniert
 
@@ -354,5 +361,5 @@ Zusätzlich gefunden: `SessionStart` unterstützt keine HTTP-Hooks (deshalb ein 
 - **Eigenes Git-Repository** (Name: **Argus**, Repo `argus`)
 - Repo: https://github.com/viper1979/argus
 - **Glossar und ADRs leben ab jetzt im Repo** (`GLOSSARY.md`, `docs/adr/`). Sie sind die maßgebliche Quelle.
-- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
-- Reihenfolge: **Spike (Abschnitt 9) → Grundgerüst Electron → Projekte und Tasks → Terminals → Hooks und Status → Entfernen → Persistenz und Fortsetzen**
+- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`, `interpretTerminalSignal`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
+- Reihenfolge: **Spike (Abschnitt 9, erledigt) → Grundgerüst Electron → Projekte und Tasks → Terminals → Hooks und Status → Entfernen → Persistenz und Fortsetzen**
