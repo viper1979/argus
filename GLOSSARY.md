@@ -21,7 +21,7 @@ Eine PowerShell innerhalb eines Tasks, die keine Agent-Session ist, z. B. für `
 _Avoid_: Shell, Konsole, Tab
 
 **Terminal-Tab**:
-Der Reiter in der Task-Ansicht, der genau ein Terminal zeigt. Ihn zu schließen beendet das Terminal. Ein Wechsel des Reiters oder des Tasks lässt das Terminal weiterlaufen. „Tab“ meint nur dieses Bedienelement, nie das Terminal selbst.
+Der Reiter in der Task-Ansicht, der genau ein Terminal oder die Agent-Session des Tasks zeigt. Ihn zu schließen beendet das Terminal. Der Tab der Agent-Session steht immer an erster Stelle, trägt den Namen des Agent-Typs und lässt sich nicht schließen. Ein Wechsel des Reiters oder des Tasks lässt Terminal und Agent-Session weiterlaufen. „Tab“ meint nur dieses Bedienelement, nie das Terminal selbst.
 _Avoid_: Fenster, Session
 
 ## Agents
@@ -33,6 +33,10 @@ _Avoid_: Agent, Provider, Modell
 **Agent-Session**:
 Eine von dir gestartete Konversation eines Agent-Typs innerhalb eines Tasks. Sie überdauert ihren Prozess: Nach dem Beenden kann sie fortgesetzt werden und bleibt dieselbe Agent-Session. Pro Task läuft höchstens eine gleichzeitig.
 _Avoid_: Agent, Run, Prozess, Chat
+
+**Konversations-ID**:
+Die ID, unter der der Agent-Typ eine Konversation speichert, bei Claude Code die `session_id`. Argus braucht sie, um eine Agent-Session fortzusetzen. Sie kann wechseln, z. B. nach `/clear`, die Agent-Session bleibt dabei dieselbe.
+_Avoid_: Session-ID, Agent-Session-ID (das ist die ID, die Argus vergibt)
 
 **Subagent**:
 Ein Agent, den eine Agent-Session selbst startet. Argus startet oder steuert ihn nicht, er zählt ihn nur. Claude-interne Hilfsagents, die ohne `SubagentStart` enden, sind keine Subagents.

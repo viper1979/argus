@@ -9,6 +9,7 @@ import { FakeStateStore } from '../persistence/testing/fake-state-store';
 import { createNodePtySpawner } from './node-pty-spawner';
 import { ShellExecutableNotFoundError } from './shell-executable-not-found-error';
 import { createTerminalService, type TerminalService } from './terminal-service';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 /** Wide enough that the probe line never wraps, which would split the expected text. */
 const WIDE_TERMINAL = { cols: 250, rows: 30 };
@@ -91,7 +92,7 @@ describe('createNodePtySpawner with real PowerShell', () => {
             exitCodes.push(exitCode);
           },
         },
-        logger: { warn: vi.fn(), error: vi.fn() },
+        logger: createFakeLogger(),
       });
     });
 

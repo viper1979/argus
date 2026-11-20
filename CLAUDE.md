@@ -36,6 +36,7 @@ Vor dem Planen eines Features oder bei Fragen zum Umfang: [docs/konzept.md](docs
 | WorktreeRoot | `worktreeRoot` |
 | Agent-Typ | `AgentType` |
 | Agent-Session | `AgentSession` |
+| Konversations-ID | `conversationId` |
 | Subagent | `Subagent` |
 | Status Arbeitet / Wartet / Bereit / Fehler / Beendet | `working` / `waiting` / `ready` / `failed` / `ended` |
 

@@ -1,12 +1,30 @@
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
+import type { StartAgentSessionResult } from '@shared/domain/agent-session';
+
+/**
+ * What a terminal tab shows (glossary: Terminal-Tab): a plain terminal, or the agent session of
+ * the task, which is always the first tab and cannot be closed (concept 5.3, step 5).
+ */
+export type TerminalTabKind = 'terminal' | 'agent-session';
 
 /** A terminal tab of a task as the tab bar shows it. */
 export interface TerminalTab {
   readonly terminalId: string;
-  /** "Terminal 1", "Terminal 2", … in the order the tabs were opened. */
+  /**
+   * Terminal tabs: "Terminal 1", "Terminal 2", … in the order they were opened. Agent session tab:
+   * name of the agent type, e.g. "Claude Code".
+   */
   readonly title: string;
+  readonly kind: TerminalTabKind;
 }
+
+/**
+ * Why the agent session of a task could not be started: a reason from the main process, or
+ * `unexpected` if the call itself failed (details are in the log).
+ */
+export type AgentSessionStartFailure =
+  Extract<StartAgentSessionResult, { ok: false }>['reason'] | 'unexpected';
 
 /** UI state of the task view: which task is shown and which terminal tabs it has. */
 export interface TaskViewState {
@@ -18,6 +36,8 @@ export interface TaskViewState {
   readonly activeTerminalByTask: Readonly<Record<string, string>>;
   /** Highest tab number handed out per task id; numbers are never reused. */
   readonly lastTabNumberByTask: Readonly<Record<string, number>>;
+  /** Why the agent session of a task could not be started; shown in its task view. */
+  readonly agentSessionFailureByTask: Readonly<Record<string, AgentSessionStartFailure>>;
 
   /**
    * Shows a task in the main area. Terminals of the previous task keep running.
@@ -31,6 +51,22 @@ export interface TaskViewState {
    * @param terminalId Id the main process returned for the terminal.
    */
   readonly addTerminal: (taskId: string, terminalId: string) => void;
+
+  /**
+   * Adds the tab of a freshly started agent session as first tab and shows it. It takes no tab
+   * number, so the next terminal tab is still "Terminal 1". Clears a previous start failure.
+   * @param taskId The task the agent session belongs to.
+   * @param terminalId Id of the terminal the agent session runs in.
+   * @param title Name of the agent type, e.g. "Claude Code".
+   */
+  readonly addAgentSessionTerminal: (taskId: string, terminalId: string, title: string) => void;
+
+  /**
+   * Remembers why the agent session of a task could not be started.
+   * @param taskId The task.
+   * @param failure The reason.
+   */
+  readonly reportAgentSessionFailure: (taskId: string, failure: AgentSessionStartFailure) => void;
 
   /**
    * Shows a terminal tab of a task.
@@ -63,6 +99,7 @@ export function createTaskViewStore(): TaskViewStore {
     terminalsByTask: {},
     activeTerminalByTask: {},
     lastTabNumberByTask: {},
+    agentSessionFailureByTask: {},
 
     selectTask: (taskId) => {
       set({ selectedTaskId: taskId });
@@ -74,6 +111,7 @@ export function createTaskViewStore(): TaskViewStore {
         const tab: TerminalTab = {
           terminalId,
           title: `${TERMINAL_TAB_TITLE_PREFIX} ${tabNumber}`,
+          kind: 'terminal',
         };
         return {
           terminalsByTask: {
@@ -84,6 +122,30 @@ export function createTaskViewStore(): TaskViewStore {
           lastTabNumberByTask: { ...state.lastTabNumberByTask, [taskId]: tabNumber },
         };
       });
+    },
+
+    addAgentSessionTerminal: (taskId, terminalId, title) => {
+      set((state) => {
+        const tab: TerminalTab = { terminalId, title, kind: 'agent-session' };
+        const agentSessionFailureByTask = { ...state.agentSessionFailureByTask };
+        // eslint-disable-next-line @typescript-eslint/no-dynamic-delete -- keyed by task id
+        delete agentSessionFailureByTask[taskId];
+        return {
+          terminalsByTask: {
+            ...state.terminalsByTask,
+            // The agent session is always tab 1, even if terminal tabs were opened before it.
+            [taskId]: [tab, ...(state.terminalsByTask[taskId] ?? [])],
+          },
+          activeTerminalByTask: { ...state.activeTerminalByTask, [taskId]: terminalId },
+          agentSessionFailureByTask,
+        };
+      });
+    },
+
+    reportAgentSessionFailure: (taskId, failure) => {
+      set((state) => ({
+        agentSessionFailureByTask: { ...state.agentSessionFailureByTask, [taskId]: failure },
+      }));
     },
 
     activateTerminal: (taskId, terminalId) => {

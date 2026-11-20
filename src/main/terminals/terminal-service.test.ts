@@ -8,9 +8,11 @@ import {
   createTerminalService,
   EXIT_TIMEOUT_MS,
   type TerminalEventSink,
+  type TerminalLaunch,
   type TerminalService,
 } from './terminal-service';
 import { FakePtySpawner } from './testing/fake-pty';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 /** Fixed ids so that opened terminals can be compared with literals; handed out in this order. */
 const TERMINAL_ID = '7d1e2f3a-4b5c-4d6e-8f7a-9b0c1d2e3f4a';
@@ -42,18 +44,18 @@ describe('TerminalService', () => {
   let logWarn: Mock<Logger['warn']>;
   let terminalService: TerminalService;
 
-  beforeEach(() => {
-    spawner = new FakePtySpawner();
-    outputEvent = vi.fn();
-    exitEvent = vi.fn();
-    logError = vi.fn();
-    logWarn = vi.fn();
+  /**
+   * Creates the service under test with the shared fakes.
+   * @param processEnv Environment Argus runs with, inherited by every terminal.
+   * @returns The service.
+   */
+  function createService(processEnv: NodeJS.ProcessEnv): TerminalService {
     const terminalIds = [TERMINAL_ID, SECOND_TERMINAL_ID];
     const stateStore = new FakeStateStore({ ...createEmptyAppState(), tasks: [LOGIN_TASK] });
-    terminalService = createTerminalService({
+    return createTerminalService({
       spawnPty: spawner.spawn,
       stateHolder: createAppStateHolder(stateStore),
-      processEnv: PROCESS_ENV,
+      processEnv,
       generateId: () => {
         const nextId = terminalIds.shift();
         if (!nextId) {
@@ -62,8 +64,17 @@ describe('TerminalService', () => {
         return nextId;
       },
       events: { output: outputEvent, exit: exitEvent },
-      logger: { warn: logWarn, error: logError },
+      logger: createFakeLogger({ warn: logWarn, error: logError }),
     });
+  }
+
+  beforeEach(() => {
+    spawner = new FakePtySpawner();
+    outputEvent = vi.fn();
+    exitEvent = vi.fn();
+    logError = vi.fn();
+    logWarn = vi.fn();
+    terminalService = createService(PROCESS_ENV);
   });
 
   afterEach(() => {
@@ -91,6 +102,72 @@ describe('TerminalService', () => {
           GIT_CONFIG_VALUE_0: 'true',
         },
       });
+    });
+
+    it('open_WithLaunch_KeepsShellOpenAndPassesStartCommandEncoded', async () => {
+      // Arrange: -NoExit keeps the PowerShell usable after the agent ended (ADR 0002)
+      const launch: TerminalLaunch = {
+        startCommand: 'claude',
+        addVariables: {},
+        removeVariable: () => false,
+      };
+
+      // Act
+      await terminalService.open({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE }, launch);
+
+      // Assert: Base64 of "claude" in UTF-16LE, produced by PowerShell
+      expect(spawner.processAt(0).args).toEqual([
+        '-NoLogo',
+        '-NoExit',
+        '-EncodedCommand',
+        'YwBsAGEAdQBkAGUA',
+      ]);
+    });
+
+    it('open_WithLaunch_RemovesRejectedVariablesAndAddsOwnOnes', async () => {
+      // Arrange: Argus started from a Claude session; the predicate sees the whole inheritance
+      terminalService = createService({
+        PATH: 'C:\\Windows',
+        CLAUDECODE: '1',
+        CLAUDE_CODE_CHILD_SESSION: '1',
+      });
+      const launch: TerminalLaunch = {
+        startCommand: 'claude',
+        addVariables: { ARGUS_TOKEN: 'token-1', ARGUS_SESSION_ID: 'session-1' },
+        removeVariable: (name, inheritedEnvironment) =>
+          'CLAUDECODE' in inheritedEnvironment && name.startsWith('CLAUDE'),
+      };
+
+      // Act
+      await terminalService.open({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE }, launch);
+
+      // Assert
+      expect(spawner.processAt(0).options.env).toEqual({
+        PATH: 'C:\\Windows',
+        ARGUS_TOKEN: 'token-1',
+        ARGUS_SESSION_ID: 'session-1',
+        GIT_CONFIG_COUNT: '1',
+        GIT_CONFIG_KEY_0: 'push.autoSetupRemote',
+        GIT_CONFIG_VALUE_0: 'true',
+      });
+    });
+
+    it('open_WithLaunchVariableInheritedInOtherCase_ReplacesItInsteadOfDuplicating', async () => {
+      // Arrange: Windows names are case-insensitive; two spellings in one block are undefined
+      terminalService = createService({ PATH: 'C:\\Windows', argus_token: 'stale' });
+      const launch: TerminalLaunch = {
+        startCommand: 'claude',
+        addVariables: { ARGUS_TOKEN: 'token-1' },
+        removeVariable: () => false,
+      };
+
+      // Act
+      await terminalService.open({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE }, launch);
+
+      // Assert
+      const environment = spawner.processAt(0).options.env;
+      expect(environment['ARGUS_TOKEN']).toBe('token-1');
+      expect(environment).not.toHaveProperty('argus_token');
     });
 
     it('open_WithUnknownTask_ReturnsTaskNotFoundWithoutStartingShell', async () => {

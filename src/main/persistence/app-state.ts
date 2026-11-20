@@ -1,3 +1,4 @@
+import { agentSessionSchema } from '@shared/domain/agent-session';
 import { projectSchema } from '@shared/domain/project';
 import { DEFAULT_SETTINGS, settingsSchema } from '@shared/domain/settings';
 import { consumedTaskNameSchema, taskSchema } from '@shared/domain/task';
@@ -19,6 +20,8 @@ export const appStateSchema = z.object({
   tasks: z.array(taskSchema).default([]),
   /** Added with #4; missing in files written before. */
   consumedTaskNames: z.array(consumedTaskNameSchema).default([]),
+  /** Added with #7; missing in files written before. */
+  agentSessions: z.array(agentSessionSchema).default([]),
 });
 
 /** Everything Argus persists in `state.json`. */
@@ -35,5 +38,6 @@ export function createEmptyAppState(): AppState {
     settings: DEFAULT_SETTINGS,
     tasks: [],
     consumedTaskNames: [],
+    agentSessions: [],
   };
 }

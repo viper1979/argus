@@ -7,6 +7,7 @@ import type { Logger } from '../logging/logger';
 import { createEmptyAppState, type AppState } from './app-state';
 import { InvalidAppStateError } from './invalid-app-state-error';
 import { createStateStore, type StateStore } from './state-store';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 /** A state with one project, as it would look after registering a repository. */
 const STATE_WITH_PROJECT: AppState = {
@@ -25,6 +26,7 @@ const STATE_WITH_PROJECT: AppState = {
   settings: { ...DEFAULT_SETTINGS, worktreeRoot: 'D:\\Worktrees' },
   tasks: [],
   consumedTaskNames: [],
+  agentSessions: [],
 };
 
 /** Backup name for the fixed test clock; colons are not allowed in Windows file names. */
@@ -44,7 +46,7 @@ describe('createStateStore', () => {
     logWarn = vi.fn<Logger['warn']>();
     store = createStateStore({
       filePath,
-      logger: { warn: logWarn, error: vi.fn<Logger['error']>() },
+      logger: createFakeLogger({ warn: logWarn }),
       now: () => new Date('2026-11-20T10:15:30.000Z'),
     });
   });
@@ -135,7 +137,12 @@ describe('createStateStore', () => {
     const state = await store.load();
 
     // Assert
-    expect(state).toEqual({ ...fileBeforeTasks, tasks: [], consumedTaskNames: [] });
+    expect(state).toEqual({
+      ...fileBeforeTasks,
+      tasks: [],
+      consumedTaskNames: [],
+      agentSessions: [],
+    });
     expect(await readdir(join(directory, 'Argus'))).toEqual(['state.json']);
   });
 

@@ -6,6 +6,7 @@ import { createAppStateHolder } from '../persistence/app-state-holder';
 import type { StateStore } from '../persistence/state-store';
 import { FakeStateStore } from '../persistence/testing/fake-state-store';
 import { createSettingsService, type SettingsService } from './settings-service';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 describe('createSettingsService', () => {
   let stateStore: FakeStateStore;
@@ -18,7 +19,7 @@ describe('createSettingsService', () => {
     stateStore = new FakeStateStore();
     applyAppearance = vi.fn<(appearance: Appearance) => void>();
     logWarn = vi.fn<Logger['warn']>();
-    logger = { warn: logWarn, error: vi.fn<Logger['error']>() };
+    logger = createFakeLogger({ warn: logWarn });
     settingsService = createSettingsService({
       stateHolder: createAppStateHolder(stateStore),
       applyAppearance,

@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { OpenTerminalResult } from '@shared/domain/terminal';
 import { taskViewStore, useTaskView, type TerminalTab } from '@renderer/stores/task-view-store';
 import { discardTerminal } from '@renderer/terminals/terminal-events';
+import { INITIAL_TERMINAL_SIZE } from '@renderer/terminals/initial-terminal-size';
 import { createTerminalView } from '@renderer/terminals/terminal-views';
 
 /** Why a terminal could not be opened, as the task view shows it. */
@@ -29,12 +30,6 @@ export interface TerminalsState {
    */
   readonly activateTerminal: (terminalId: string) => void;
 }
-
-/**
- * Size the PTY starts with. The real size is only known once xterm.js is on the page; it is
- * sent right after the first display.
- */
-const INITIAL_TERMINAL_SIZE = { cols: 120, rows: 30 };
 
 /** Stable empty list, so the store selector does not create a new array on every render. */
 const NO_TABS: readonly TerminalTab[] = [];

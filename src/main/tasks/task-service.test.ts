@@ -14,6 +14,7 @@ import { createEmptyAppState, type AppState } from '../persistence/app-state';
 import { createAppStateHolder } from '../persistence/app-state-holder';
 import { FakeStateStore } from '../persistence/testing/fake-state-store';
 import { createTaskService, type TaskGitClient, type TaskService } from './task-service';
+import { createFakeLogger } from '../logging/testing/fake-logger';
 
 /** Fixed id so that created tasks can be compared with literals. */
 const TASK_ID = '3c9e4f5a-6b7c-4d8e-9f0a-1b2c3d4e5f6a';
@@ -206,7 +207,7 @@ describe('createTaskService', () => {
       stateHolder: createAppStateHolder(stateStore),
       generateId: () => TASK_ID,
       pathExists: (path) => Promise.resolve(existingPaths.has(path)),
-      logger: { warn: logWarn, error: logError },
+      logger: createFakeLogger({ warn: logWarn, error: logError }),
     });
     return { taskService, stateStore };
   }

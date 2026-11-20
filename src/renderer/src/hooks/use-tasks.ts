@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CreateTaskRequest, CreateTaskResult, Task } from '@shared/domain/task';
+import { startAgentSession } from '@renderer/agent-sessions/start-agent-session';
+import { taskViewStore } from '@renderer/stores/task-view-store';
 
 /** Tasks of all projects plus the actions the sidebar offers on them. */
 export interface TasksState {
@@ -56,6 +58,11 @@ export function useTasks(): TasksState {
       const result = await window.argus.task.create(request);
       if (result.ok) {
         await reload();
+        // The new task is shown right away and the dialog closes without waiting for the agent
+        // session (concept 5.2, step 5); its tab, or why it is missing, appears when it is ready.
+        // startAgentSession reports every failure itself and never rejects.
+        taskViewStore.getState().selectTask(result.task.id);
+        void startAgentSession(result.task);
       }
       return result;
     },

@@ -1,5 +1,9 @@
 import { z } from 'zod';
 import {
+  startAgentSessionRequestSchema,
+  startAgentSessionResultSchema,
+} from '../domain/agent-session';
+import {
   addProjectResultSchema,
   projectSchema,
   projectSettingsSchema,
@@ -94,6 +98,13 @@ export const ipcContract = {
     close: {
       request: terminalReferenceSchema.strict(),
       response: z.object({}),
+    },
+  },
+  agentSession: {
+    /** Starts the agent session of a task in a new terminal (concept 5.3, issue #7). */
+    start: {
+      request: startAgentSessionRequestSchema.strict(),
+      response: startAgentSessionResultSchema,
     },
   },
   settings: {

@@ -8,6 +8,9 @@ import type { Logger } from './logger';
  */
 export function createConsoleLogger(scope: string): Logger {
   return {
+    info: (message, context) => {
+      console.info(`[${scope}] ${message}`, context);
+    },
     warn: (message, context) => {
       console.warn(`[${scope}] ${message}`, context);
     },
