@@ -1,10 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { ipcContract } from '@shared/ipc/contract';
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron';
+import { createGitClient } from './git/git-client';
+import { createProcessGitRunner } from './git/process-git-runner';
 import { createIpcHandlers } from './ipc/ipc-handlers';
 import { registerIpcHandlers } from './ipc/register-ipc-handlers';
 import { createConsoleLogger } from './logging/console-logger';
+import { createAppStateHolder } from './persistence/app-state-holder';
+import { createStateStore } from './persistence/state-store';
+import { createProjectService } from './projects/project-service';
 
 const MAIN_WINDOW_WIDTH = 1280;
 const MAIN_WINDOW_HEIGHT = 800;
@@ -35,7 +41,7 @@ function resolveRendererUrl(): URL {
  * Creates the main window. The renderer gets no Node access and reaches the main process
  * only through the typed preload API.
  */
-function createMainWindow(): void {
+function createMainWindow(): BrowserWindow {
   const mainWindow = new BrowserWindow({
     width: MAIN_WINDOW_WIDTH,
     height: MAIN_WINDOW_HEIGHT,
@@ -62,22 +68,59 @@ function createMainWindow(): void {
   });
 
   void mainWindow.loadURL(resolveRendererUrl().href);
+  return mainWindow;
 }
+
+/** The only window of Argus; dialogs attach to it so they are modal. */
+let mainWindowReference: BrowserWindow | null = null;
+
+/** File in the userData folder that holds projects and settings. */
+const STATE_FILE_NAME = 'state.json';
 
 /** Exit code when the app cannot start, e.g. because an IPC handler is missing. */
 const STARTUP_FAILURE_EXIT_CODE = 1;
 
-/** Wires IPC and opens the main window once Electron is ready. */
+/**
+ * Shows the native folder picker attached to the main window.
+ * @param title Title of the dialog.
+ * @returns The picked folder, or `null` if the user cancelled.
+ */
+async function pickFolder(title: string): Promise<string | null> {
+  const options: OpenDialogOptions = { title, properties: ['openDirectory'] };
+  // Attach to the main window even if it is not focused, so the dialog is always modal.
+  const result = mainWindowReference
+    ? await dialog.showOpenDialog(mainWindowReference, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/** Wires services and IPC and opens the main window once Electron is ready. */
 function startApp(): void {
+  // userData is %APPDATA%\Argus because of productName (concept, section 4).
+  const stateStore = createStateStore({
+    filePath: join(app.getPath('userData'), STATE_FILE_NAME),
+    logger: createConsoleLogger('state'),
+    now: () => new Date(),
+  });
+  const stateHolder = createAppStateHolder(stateStore);
+  const projectService = createProjectService({
+    gitClient: createGitClient(createProcessGitRunner()),
+    stateHolder,
+    generateId: randomUUID,
+  });
+
   registerIpcHandlers({
     ipcMain,
     contract: ipcContract,
-    handlers: createIpcHandlers(),
+    handlers: createIpcHandlers({ projectService, stateHolder, pickFolder }),
     logger: createConsoleLogger('ipc'),
     allowedRendererUrl: resolveRendererUrl(),
   });
 
-  createMainWindow();
+  mainWindowReference = createMainWindow();
+  mainWindowReference.on('closed', () => {
+    mainWindowReference = null;
+  });
 }
 
 app

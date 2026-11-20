@@ -12,6 +12,10 @@ _Avoid_: Repo (im Fachtext), Workspace, Solution
 Eine abgegrenzte Aufgabe innerhalb eines Projekts mit genau einem eigenen Worktree und Branch. Ein Task ist die Einheit, die gestartet, beobachtet und am Ende gemerged oder verworfen wird.
 _Avoid_: Workspace, Job, Ticket, Worktree (als Synonym)
 
+**WorktreeRoot**:
+Der global eingestellte Ordner, unter dem Argus die Worktrees aller Tasks anlegt, je Projekt ein Unterordner (`<WorktreeRoot>\<Projekt>\<task-name>`). Ist anfangs nicht gesetzt.
+_Avoid_: Arbeitsverzeichnis, Basisordner
+
 **Terminal**:
 Eine PowerShell innerhalb eines Tasks, die keine Agent-Session ist, z. B. für `dotnet watch` oder Git-Befehle.
 _Avoid_: Shell, Konsole, Tab

@@ -200,7 +200,7 @@ type TerminalSignal =
 ### 5.1 Projekt hinzufügen
 
 1. Repo-Ordner auswählen → prüfen, ob es ein Git-Repo ist
-2. Haupt-Branch ermitteln (`origin/HEAD`), Branch-Präfix (Default `agent/`) und Default-Agent-Typ festlegen
+2. Haupt-Branch ermitteln (`origin/HEAD`), Branch-Präfix (ein Segment ohne `/`, Default `agent`; Branches heißen dann `agent/<task-name>`) und Default-Agent-Typ festlegen
 3. Optional ein lokales **Setup-Skript** (PowerShell) hinterlegen, z. B. `.env` kopieren oder `dotnet restore`
 
 ### 5.2 Task anlegen
