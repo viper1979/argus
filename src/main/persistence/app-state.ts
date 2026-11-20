@@ -1,5 +1,5 @@
 import { projectSchema } from '@shared/domain/project';
-import { settingsSchema } from '@shared/domain/settings';
+import { DEFAULT_SETTINGS, settingsSchema } from '@shared/domain/settings';
 import { consumedTaskNameSchema, taskSchema } from '@shared/domain/task';
 import { z } from 'zod';
 
@@ -32,7 +32,7 @@ export function createEmptyAppState(): AppState {
   return {
     version: APP_STATE_VERSION,
     projects: [],
-    settings: { worktreeRoot: null },
+    settings: DEFAULT_SETTINGS,
     tasks: [],
     consumedTaskNames: [],
   };

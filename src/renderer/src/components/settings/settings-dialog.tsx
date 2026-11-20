@@ -9,6 +9,7 @@ import {
   DialogTitle,
 } from '@renderer/components/ui/dialog';
 import { Label } from '@renderer/components/ui/label';
+import { TerminalFontSettings } from '@renderer/components/settings/terminal-font-settings';
 
 /** Shown when the settings cannot be read; details are in the log. */
 const LOAD_ERROR_MESSAGE = 'Die Einstellungen konnten nicht geladen werden.';
@@ -21,7 +22,7 @@ interface SettingsDialogProps {
   readonly onClose: () => void;
 }
 
-/** Global settings of Argus; for now only the folder under which worktrees are created. */
+/** Global settings of Argus: the worktree root and the terminal font. */
 export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
   const { isOpen, onClose } = props;
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -66,13 +67,13 @@ export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
           <DialogTitle>Einstellungen</DialogTitle>
           <DialogDescription>Gelten für alle Projekte.</DialogDescription>
         </DialogHeader>
-        <div className="grid gap-2">
+        <div className="grid min-w-0 gap-2">
           <Label>WorktreeRoot</Label>
           <p className="text-xs text-muted-foreground">
             Unter diesem Ordner legt Argus die Worktrees der Tasks an, je Projekt ein Unterordner.
           </p>
-          <div className="flex items-center gap-2">
-            <code className="flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">
+          <div className="flex min-w-0 items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded-md border border-border px-3 py-2 text-sm">
               {settings?.worktreeRoot ?? 'Nicht festgelegt'}
             </code>
             <Button
@@ -94,6 +95,16 @@ export function SettingsDialog(props: SettingsDialogProps): React.JSX.Element {
             </p>
           )}
         </div>
+        {settings && (
+          <div className="grid min-w-0 gap-2 border-t border-border pt-4">
+            <TerminalFontSettings
+              // Remount when the stored font changes, so the inputs never show an outdated draft.
+              key={`${settings.terminalFontFamily}|${String(settings.terminalFontSize)}`}
+              settings={settings}
+              onSaved={setSettings}
+            />
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );

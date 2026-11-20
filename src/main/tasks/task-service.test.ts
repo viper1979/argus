@@ -1,3 +1,4 @@
+import { DEFAULT_SETTINGS } from '@shared/domain/settings';
 import type { Project } from '@shared/domain/project';
 import type { CreateTaskRequest, Task } from '@shared/domain/task';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
@@ -172,7 +173,7 @@ function stateWithWebshop(changes: Partial<AppState> = {}): AppState {
   return {
     ...createEmptyAppState(),
     projects: [WEBSHOP],
-    settings: { worktreeRoot: 'D:\\Worktrees' },
+    settings: { ...DEFAULT_SETTINGS, worktreeRoot: 'D:\\Worktrees' },
     ...changes,
   };
 }
@@ -239,7 +240,7 @@ describe('createTaskService', () => {
   it('create_WithoutWorktreeRoot_ReturnsWorktreeRootMissingAndTouchesNothing', async () => {
     // Arrange
     const { taskService, stateStore } = createService(
-      stateWithWebshop({ settings: { worktreeRoot: null } }),
+      stateWithWebshop({ settings: { ...DEFAULT_SETTINGS, worktreeRoot: null } }),
     );
 
     // Act

@@ -5,7 +5,7 @@ import {
   projectSettingsSchema,
   updateProjectResultSchema,
 } from '../domain/project';
-import { settingsSchema } from '../domain/settings';
+import { settingsPatchSchema, settingsSchema } from '../domain/settings';
 import { createTaskRequestSchema, createTaskResultSchema, taskSchema } from '../domain/task';
 import {
   openTerminalRequestSchema,
@@ -102,7 +102,7 @@ export const ipcContract = {
       response: settingsSchema,
     },
     update: {
-      request: settingsSchema.strict(),
+      request: settingsPatchSchema,
       response: settingsSchema,
     },
   },
