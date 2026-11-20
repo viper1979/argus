@@ -20,6 +20,10 @@ _Avoid_: Arbeitsverzeichnis, Basisordner
 Eine PowerShell innerhalb eines Tasks, die keine Agent-Session ist, z. B. für `dotnet watch` oder Git-Befehle.
 _Avoid_: Shell, Konsole, Tab
 
+**Terminal-Tab**:
+Der Reiter in der Task-Ansicht, der genau ein Terminal zeigt. Ihn zu schließen beendet das Terminal. Ein Wechsel des Reiters oder des Tasks lässt das Terminal weiterlaufen. „Tab“ meint nur dieses Bedienelement, nie das Terminal selbst.
+_Avoid_: Fenster, Session
+
 ## Agents
 
 **Agent-Typ**:

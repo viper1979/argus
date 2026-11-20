@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { IpcContractShape } from '../contract-types';
+import type { IpcContractShape, IpcEventContractShape } from '../contract-types';
 
 /**
  * Contract used only by tests, so they stay independent of the real contract's growth.
@@ -13,3 +13,10 @@ export const testContract = {
     },
   },
 } as const satisfies IpcContractShape;
+
+/** Event contract used only by tests; shares the `greeting` domain with {@link testContract}. */
+export const testEventContract = {
+  greeting: {
+    greeted: z.object({ name: z.string() }),
+  },
+} as const satisfies IpcEventContractShape;

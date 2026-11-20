@@ -4,11 +4,13 @@ import { app } from 'electron';
 import type { AppStateHolder } from '../persistence/app-state-holder';
 import type { ProjectService } from '../projects/project-service';
 import type { TaskService } from '../tasks/task-service';
+import type { TerminalService } from '../terminals/terminal-service';
 
 /** Services the IPC handlers delegate to; created once at app start. */
 export interface IpcHandlerDependencies {
   readonly projectService: ProjectService;
   readonly taskService: TaskService;
+  readonly terminalService: TerminalService;
   readonly stateHolder: AppStateHolder;
   /**
    * Shows the native folder picker.
@@ -24,7 +26,7 @@ export interface IpcHandlerDependencies {
  * @returns Handlers grouped by domain, matching {@link IpcContract}.
  */
 export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHandlers<IpcContract> {
-  const { projectService, taskService, stateHolder, pickFolder } = dependencies;
+  const { projectService, taskService, terminalService, stateHolder, pickFolder } = dependencies;
 
   return {
     app: {
@@ -45,6 +47,21 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
     task: {
       list: async () => ({ tasks: await taskService.list() }),
       create: (request) => taskService.create(request),
+    },
+    terminal: {
+      open: (request) => terminalService.open(request),
+      write: ({ terminalId, data }) => {
+        terminalService.write(terminalId, data);
+        return {};
+      },
+      resize: ({ terminalId, ...size }) => {
+        terminalService.resize(terminalId, size);
+        return {};
+      },
+      close: async ({ terminalId }) => {
+        await terminalService.close(terminalId);
+        return {};
+      },
     },
     settings: {
       get: async () => (await stateHolder.read()).settings,
