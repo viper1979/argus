@@ -162,7 +162,7 @@ Wie Orca, auf das Nötige reduziert:
 | `ProjectService` | Projekte registrieren, Einstellungen pro Projekt |
 | `TaskService` | Tasks anlegen und entfernen, koordiniert Worktree und Terminals |
 | `WorktreeService` | `git worktree add/remove`, Branch löschen, Prüfung „geändert/ungepusht“ |
-| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0) als Rohsignale weiter |
+| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0) als Terminal-Signale weiter |
 | `HookServer` | HTTP auf `127.0.0.1:<port>`, prüft das Token, nimmt Hook-Events an |
 | `AgentTypeAdapter` | **Schnittstelle pro Agent-Typ**: Startbefehl, Resume-Befehl, Hook-Konfiguration, Event → Status, Terminal-Signal → Status (Abbruch-Erkennung) |
 | `StatusTracker` | hält den Status pro Agent-Session, wendet die Regeln aus Abschnitt 3 an, löst Notifications aus |
