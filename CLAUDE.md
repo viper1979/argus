@@ -27,7 +27,7 @@ Ein neuer Fachbegriff oder eine geänderte Bedeutung wird im selben Change in `G
 ## Leitplanken
 
 - **Nur Windows.** Jedes Terminal ist eine PowerShell (`pwsh`, Fallback `powershell.exe`) über node-pty/ConPTY; Agent-CLIs starten *in* dieser Shell (ADR 0002).
-- **Claude-Hooks ausschließlich über die generierte `--settings`-Datei** mit HTTP-Hooks; die Claude-Konfiguration des Users (`~/.claude/`) bleibt unberührt (ADR 0003).
+- **Claude-Hooks ausschließlich über die generierte `--settings`-Datei** mit HTTP-Hooks, nur `SessionStart` als `curl.exe`-Command-Hook; die Claude-Konfiguration des Users (`~/.claude/`) bleibt unberührt (ADR 0003). Ein Abbruch per Escape/Strg+C wird über Tastendruck + Terminal-Titel erkannt (ADR 0005).
 - **Prozessgrenzen:** Der Main-Prozess besitzt PTYs, Git, Hook-Server und Persistenz. Der Renderer läuft mit `contextIsolation` ohne Node-Zugriff und spricht nur über die typisierte Preload-API; jede IPC-Nachricht und jeder Hook-Payload wird mit zod validiert.
 - **Agent-Typ-neutraler Kern:** Alles Claude-Spezifische (Startbefehl, Resume, Hook-Konfiguration, Event→Status) lebt im `AgentTypeAdapter` für Claude Code, damit Codex ohne Umbau des Kerns andockt.
 - **Branches löschen mit `git branch -d`.** `git branch -D` nur nach ausdrücklicher Bestätigung durch den User in der UI (Ablauf „Task entfernen“ im Konzept).
