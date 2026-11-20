@@ -320,6 +320,8 @@ Die HTTP-Konfiguration gilt für: `UserPromptSubmit`, `PreToolUse`, `PostToolUse
 - [ ] Status per Hooks, Statusregeln inklusive Subagent-Zähler und Abbruch-Erkennung über den Terminal-Titel
 - [ ] Sidebar mit Status, Subagent-Zähler und Anzahl geänderter Dateien
 - [ ] Task-Ansicht mit Tabs (Agent-Session + Terminals)
+- [ ] Terminal-Schrift einstellbar (Familie und Größe, z. B. für Nerd Fonts in Prompt-Themes)
+- [ ] Dark Mode: Darstellung System, Hell oder Dunkel, Default folgt Windows
 - [ ] Toast-Notifications
 - [ ] Task entfernen mit sicherer Branch-Löschung
 - [ ] Persistenz und „Fortsetzen“ per `--resume`
