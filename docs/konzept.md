@@ -20,7 +20,8 @@ Begriffe: [Glossar](../GLOSSARY.md) · Entscheidungen: [docs/adr](adr/)
 | Betriebssystem | Zunächst nur Windows; jedes Terminal ist eine PowerShell | [ADR 0002](adr/0002-zunaechst-nur-windows.md) |
 | Agent-Typen | Claude Code im MVP, Codex muss später ohne Umbau ergänzbar sein | – |
 | Interaktion | Echtes Terminal (PTY), keine eigene Chat-Oberfläche | – |
-| Status-Erkennung | Claude-Hooks per `--settings` als HTTP-Hooks, globale Settings bleiben unberührt | [ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md) |
+| Status-Erkennung | Claude-Hooks per `--settings` als HTTP-Hooks (nur `SessionStart` als `curl.exe`-Command-Hook), globale Settings bleiben unberührt | [ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md) |
+| Abbruch-Erkennung | Escape bzw. Strg+C plus Leerlauf-Glyphe im Terminal-Titel, weil Claude dafür kein Hook-Event sendet | [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md) |
 | Orchestrierung | Nur ich starte Agent-Sessions; Subagents der Agents sind erlaubt | – |
 | Lebensdauer | Terminals enden mit der App, Agent-Sessions sind per `--resume` fortsetzbar | [ADR 0004](adr/0004-kein-hintergrunddienst-fuer-terminals.md) |
 | Git-Abschluss | Argus macht kein Commit, Push oder PR; das erledigt die Agent-Session oder ich | – |
@@ -74,20 +75,22 @@ classDiagram
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Arbeitet: Start mit Prompt
-    [*] --> Bereit: Start ohne Prompt (SessionStart)
+    [*] --> Bereit: SessionStart
     Bereit --> Arbeitet: UserPromptSubmit
     Arbeitet --> Wartet: PermissionRequest / AskUserQuestion
     Wartet --> Arbeitet: PostToolUse / PostToolUseFailure / UserPromptSubmit
     Arbeitet --> Bereit: Stop
+    Arbeitet --> Bereit: Abbruch (Escape/Strg+C + Titel ✳)
     Arbeitet --> Fehler: StopFailure
     Fehler --> Arbeitet: UserPromptSubmit
-    Bereit --> Beendet: SessionEnd
-    Fehler --> Beendet: SessionEnd
-    Wartet --> Beendet: SessionEnd
-    Arbeitet --> Beendet: SessionEnd
-    Beendet --> Bereit: Fortsetzen (--resume)
+    Bereit --> Beendet: SessionEnd (außer clear)
+    Fehler --> Beendet: SessionEnd (außer clear)
+    Wartet --> Beendet: SessionEnd (außer clear)
+    Arbeitet --> Beendet: SessionEnd (außer clear)
+    Beendet --> Bereit: Fortsetzen (--resume, SessionStart)
 ```
+
+Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemessen nach etwa 0,3 s. **Bereit** ist dann nur ein kurzer Zwischenstand. Toasts gibt es deshalb nur beim Übergang *aus* **Arbeitet** oder **Wartet**. **Bereit** nach `SessionStart` löst keinen Toast aus.
 
 | Status | Bedeutung | Darstellung |
 |---|---|---|
@@ -100,10 +103,13 @@ stateDiagram-v2
 ### Regeln für die Auswertung (Lehren aus Orca)
 
 1. **Subagents verfälschen den Status nicht.** Events mit `agent_id` (also von Subagents) ändern den Status der Agent-Session nicht. `SubagentStart` und `SubagentStop` erhöhen bzw. senken nur den Zähler. Das Ende eines Subagents setzt die Agent-Session nie auf **Bereit**.
+   - Der Zähler führt eine **Menge von `agent_id`s**. `SubagentStop` entfernt nur IDs, deren `SubagentStart` er gesehen hat. Nach Turns mit Tool- oder Subagent-Aufrufen meldet Claude ein `SubagentStop` Claude-interner Hilfsagents (leerer `agent_type`, kein `SubagentStart`). Diese zählen nicht als Subagent, und ein einfacher Zähler würde dadurch negativ.
+   - Subagents laufen asynchron. Der Haupt-Agent meldet `Stop` (→ **Bereit**), *während* der Subagent noch läuft. Dessen Ergebnis kommt als synthetisches `UserPromptSubmit` (`<agent-message …>`) zurück, also **Arbeitet**, gefolgt von einem zweiten `Stop`. Der Zähler in der Sidebar zeigt, dass noch Subagents laufen.
 2. **„Wartet“ ist sticky.** Ein `PreToolUse` eines anderen Tools oder Subagents hebt **Wartet** nicht auf. Erst `PostToolUse`/`PostToolUseFailure` des Haupt-Agents, ein neuer Prompt oder `Stop` lösen es auf.
 3. **`AskUserQuestion`** kommt als `PreToolUse` an, bedeutet aber **Wartet**.
-4. **Abbruch durch mich** (Escape): Laut Claude-Doku feuert dann *kein* `Stop`. Der Status bleibt also auf **Arbeitet** hängen. → Siehe [Abschnitt 9](#9-im-prototyp-zu-prüfen).
-5. **Beendet** wird über `SessionEnd` erkannt. Das PTY selbst endet nicht, weil die PowerShell mit `-NoExit` weiterläuft.
+4. **Abbruch durch mich** (Escape bzw. Strg+C): Claude sendet *kein* Event. Argus erkennt den Abbruch am Tastendruck plus Leerlauf-Glyphe `✳` im Terminal-Titel und setzt **Bereit** ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)). Ein offenes `PreToolUse` bleibt dabei ohne `PostToolUse`. Ob das auch aus **Wartet** heraus greift, ist noch ungetestet.
+5. **Beendet** wird über `SessionEnd` erkannt. Das kommt bei `/exit` und bei zweimal Strg+C im Leerlauf (`reason: prompt_input_exit`). Ein `/exit`, das *während* der Arbeit eingegeben wird, führt Claude nicht aus. Endet die PTY (z. B. beim Schließen der App), kommt `SessionEnd` mit `reason: other`. Das PTY selbst endet bei `/exit` nicht, weil die PowerShell mit `-NoExit` weiterläuft.
+6. **`/clear`** meldet `SessionEnd` (`reason: clear`) und sofort `SessionStart` (`source: clear`) mit einer **neuen** `session_id`. Die Agent-Session bleibt dieselbe: Status **Bereit**, Subagent-Zähler leeren, neue Konversations-ID merken. Ein `SessionEnd` mit `reason: clear` führt deshalb **nicht** zu **Beendet**.
 
 ## 4. Architektur
 
@@ -156,9 +162,9 @@ Wie Orca, auf das Nötige reduziert:
 | `ProjectService` | Projekte registrieren, Einstellungen pro Projekt |
 | `TaskService` | Tasks anlegen und entfernen, koordiniert Worktree und Terminals |
 | `WorktreeService` | `git worktree add/remove`, Branch löschen, Prüfung „geändert/ungepusht“ |
-| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden |
+| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0) als Terminal-Signale weiter |
 | `HookServer` | HTTP auf `127.0.0.1:<port>`, prüft das Token, nimmt Hook-Events an |
-| `AgentTypeAdapter` | **Schnittstelle pro Agent-Typ**: Startbefehl, Resume-Befehl, Hook-Konfiguration, Event → Status |
+| `AgentTypeAdapter` | **Schnittstelle pro Agent-Typ**: Startbefehl, Resume-Befehl, Hook-Konfiguration, Event → Status, Terminal-Signal → Status (Abbruch-Erkennung) |
 | `StatusTracker` | hält den Status pro Agent-Session, wendet die Regeln aus Abschnitt 3 an, löst Notifications aus |
 | `Store` | atomares Lesen und Schreiben von `state.json` |
 
@@ -175,9 +181,18 @@ interface AgentTypeAdapter {
   buildStartCommand(context: AgentLaunchContext): string;
   /** Builds the shell command that resumes an existing conversation. */
   buildResumeCommand(context: AgentLaunchContext, conversationId: string): string;
+  /** Builds the hook settings file content for the given hook server port; validated with zod before writing. */
+  buildHookSettings(port: number): HookSettingsFile;
   /** Translates a raw hook payload into a status event, or null if irrelevant. */
   interpretHookEvent(payload: unknown): AgentStatusEvent | null;
+  /** Translates a terminal signal (key press, title change) into a status event, e.g. an interrupt. */
+  interpretTerminalSignal(signal: TerminalSignal): AgentStatusEvent | null;
 }
+
+/** Raw signal from the PTY, forwarded by the TerminalService. */
+type TerminalSignal =
+  | { kind: 'input'; data: string; at: number }
+  | { kind: 'title'; title: string; at: number };
 ```
 
 ## 5. Abläufe
@@ -204,40 +219,47 @@ interface AgentTypeAdapter {
 
 ### 5.3 Agent-Session starten bzw. fortsetzen
 
-1. Eine Agent-Session-ID erzeugen. Hook-Settings-Datei schreiben: `%APPDATA%\Argus\hooks\claude-code.json` (eine Datei für alle, die Werte kommen aus Umgebungsvariablen).
+**Vorab, bei jedem App-Start:** Argus schreibt die Hook-Settings-Datei `%APPDATA%\Argus\hooks\claude-code.json` mit dem aktuellen Port des Hook-Servers. Es ist eine Datei für alle Agent-Sessions. Token und Agent-Session-ID kommen über Header aus Umgebungsvariablen, der Port steht als Zahl in der URL, weil `$VAR` in der `url` nicht aufgelöst wird.
+
+1. Eine Agent-Session-ID erzeugen.
 2. PTY starten: `pwsh -NoExit` (Fallback `powershell.exe`), `cwd` = Worktree. Umgebungsvariablen setzen:
-   - `ARGUS_PORT`
    - `ARGUS_TOKEN`
    - `ARGUS_SESSION_ID`
-3. Befehl: `claude --settings <hook-datei> ["<start-prompt>"]`
+   - Geerbte `CLAUDE*`-Variablen **entfernen**. Sonst erbt Claude die Variablen einer umgebenden Claude-Session, speichert kein Transcript, und `--resume` funktioniert nicht.
+3. Befehl: `claude --settings <hook-datei> ['<start-prompt>']`
    - Fortsetzen: `claude --settings <hook-datei> --resume <konversations-id>`
-   - Den Start-Prompt per `-EncodedCommand` oder eine Prompt-Datei übergeben, um Probleme mit PowerShell-Quoting zu vermeiden
-4. Das erste Hook-Event liefert die `session_id` von Claude. Sie wird als **Konversations-ID** gespeichert und für `--resume` gebraucht.
+   - Den Befehl per `-EncodedCommand` übergeben, den Start-Prompt darin als String in einfachen Anführungszeichen (`'` verdoppeln). Im Spike kamen `"`, `'`, `$`, Umlaute und Backticks unverfälscht an.
+4. `SessionStart` liefert die `session_id` von Claude. Sie wird als **Konversations-ID** gespeichert und für `--resume` gebraucht. Jedes weitere `SessionStart` (z. B. nach `/clear`) überschreibt sie.
 
-Hook-Settings (Skizze):
+Hook-Settings (Skizze, Port `51234` als Beispiel):
 
 ```json
 {
   "hooks": {
     "Stop": [{ "hooks": [{
       "type": "http",
-      "url": "http://127.0.0.1:${ARGUS_PORT}/hooks/claude-code",
+      "url": "http://127.0.0.1:51234/hooks/claude-code",
       "timeout": 2,
       "headers": {
         "X-Argus-Token": "$ARGUS_TOKEN",
         "X-Argus-Session": "$ARGUS_SESSION_ID"
       },
-      "allowedEnvVars": ["ARGUS_TOKEN", "ARGUS_SESSION_ID", "ARGUS_PORT"]
+      "allowedEnvVars": ["ARGUS_TOKEN", "ARGUS_SESSION_ID"]
+    }]}],
+    "SessionStart": [{ "hooks": [{
+      "type": "command",
+      "shell": "powershell",
+      "timeout": 3,
+      "command": "curl.exe -s -m 2 -H 'Content-Type: application/json' -H \"X-Argus-Token: $env:ARGUS_TOKEN\" -H \"X-Argus-Session: $env:ARGUS_SESSION_ID\" --data-binary '@-' http://127.0.0.1:51234/hooks/claude-code"
     }]}]
   }
 }
 ```
 
-Dieselbe Konfiguration gilt für: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `SessionEnd`.
+Die HTTP-Konfiguration gilt für: `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PermissionRequest`, `Stop`, `StopFailure`, `SubagentStart`, `SubagentStop`, `SessionEnd`. `SessionStart` unterstützt keine HTTP-Hooks und bekommt deshalb den Command-Hook ([ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md)).
 
 > [!WARNING]
-> **Zu prüfen**
-> Ob Umgebungsvariablen auch in der `url` aufgelöst werden, ist offen. Falls nicht: einen festen Port verwenden oder die Datei pro App-Start mit dem konkreten Port neu schreiben.
+> **Die Datei muss strikt gültig sein.** Ein ungültiger `PreToolUse`- oder `PermissionRequest`-Hook lässt Claude die gesamte Datei verwerfen, und es kommt kein Event an. Argus erzeugt sie aus Code und validiert sie mit zod.
 
 ### 5.4 Arbeiten am Task
 
@@ -290,7 +312,7 @@ Dieselbe Konfiguration gilt für: `SessionStart`, `UserPromptSubmit`, `PreToolUs
 - [ ] Projekte hinzufügen und entfernen, Einstellungen pro Projekt (Präfix, Default-Agent-Typ, Setup-Skript)
 - [ ] Task anlegen (Worktree + Branch), Setup-Skript ausführen
 - [ ] Agent-Session mit Claude Code starten, optional mit Start-Prompt
-- [ ] Status per HTTP-Hooks, Statusregeln inklusive Subagent-Zähler
+- [ ] Status per Hooks, Statusregeln inklusive Subagent-Zähler und Abbruch-Erkennung über den Terminal-Titel
 - [ ] Sidebar mit Status, Subagent-Zähler und Anzahl geänderter Dateien
 - [ ] Task-Ansicht mit Tabs (Agent-Session + Terminals)
 - [ ] Toast-Notifications
@@ -317,29 +339,27 @@ Dieselbe Konfiguration gilt für: `SessionStart`, `UserPromptSubmit`, `PreToolUs
 6. Button „Pushen und PR erstellen“ (GitHub bzw. Azure DevOps)
 7. Freigaben direkt aus der Oberfläche beantworten (`PermissionRequest` offen halten)
 8. Feedback-Schleife: Zeilen-Kommentare als Prompt an die Agent-Session
-9. Fallback-Status-Erkennung über den Terminal-Titel bzw. OSC 7501
+9. Aktivitätsmeldungen per OSC 7501 (Claudes Anfrage `7501;?` beantworten) als präzisere Abbruch-Erkennung, siehe [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)
 
 ## 9. Im Prototyp zu prüfen
 
-Bevor die eigentliche Umsetzung beginnt, prüft ein kleiner Spike (Electron + node-pty + Hook-Server):
+Der Spike zu Issue #1 (Node + node-pty + Hook-Server, ohne Electron; Code auf Branch `spike/hooks`) hat die Annahmen geprüft. Die Details stehen in [ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md#ergebnisse-des-spikes-issue-1).
 
-- [ ] Laufen Hooks aus `--settings` **zusätzlich** zu den Hooks in `~/.claude/settings.json`?
-- [ ] Verhalten bei nicht erreichbarer Hook-URL: Bleibt Claude flüssig, wie groß ist die Verzögerung?
-- [ ] Werden `$VAR` in `url` und `headers` aufgelöst (`allowedEnvVars`)?
-- [ ] Ist bei Hook-Events von Subagents `agent_id` gesetzt, sodass sie sich vom Haupt-Agent unterscheiden lassen?
-- [ ] Welches Event kommt beim Abbruch per Escape? (Laut Doku kein `Stop`.) Falls keins: Fallback über den Terminal-Titel oder Ausgabe-Inaktivität.
-- [ ] Kommt `SessionEnd` zuverlässig, auch bei `/exit` und Strg+C?
-- [ ] node-pty mit ConPTY in Electron unter Windows: Rendering, Resize, Umlaute
-- [ ] Start-Prompt mit Sonderzeichen sicher übergeben (`-EncodedCommand`)
+- [x] Laufen Hooks aus `--settings` **zusätzlich** zu den Hooks in `~/.claude/settings.json`? → **Ja.**
+- [x] Verhalten bei nicht erreichbarer Hook-URL → Ein geschlossener Port kostet nichts. Ein Server, der nicht antwortet, kostet pro blockierendem Event das volle Timeout, deshalb 2–3 s.
+- [x] Werden `$VAR` in `url` und `headers` aufgelöst? → **Nur in `headers`.** Der Port steht deshalb als Zahl in der URL.
+- [x] Ist bei Hook-Events von Subagents `agent_id` gesetzt? → **Ja.** Interne Agents senden aber `SubagentStop` ohne `SubagentStart` (Regel 1).
+- [x] Welches Event kommt beim Abbruch per Escape? → **Keins**, auch bei Strg+C nicht. Erkennung über den Terminal-Titel ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)).
+- [x] Kommt `SessionEnd` zuverlässig, auch bei `/exit` und Strg+C? → **Im Leerlauf ja**, mit `reason: prompt_input_exit`. Ein `/exit` während der Arbeit wird nicht ausgeführt. Endet die PTY, kommt `reason: other`.
+- [ ] node-pty mit ConPTY in Electron unter Windows: Rendering, Resize, Umlaute → nicht Teil des Spikes, das prüft das Grundgerüst
+- [x] Start-Prompt mit Sonderzeichen sicher übergeben → `-EncodedCommand` mit String in einfachen Anführungszeichen funktioniert
 
-> [!TIP]
-> **Fallback**
-> Scheitern die HTTP-Hooks per `--settings`, greift die Orca-Variante: ein globales Hook-Skript mit einem Guard auf `ARGUS_SESSION_ID`, das per `curl.exe` postet (siehe [ADR 0003](adr/0003-hooks-per-settings-flag-und-http.md)).
+Zusätzlich gefunden: `SessionStart` unterstützt keine HTTP-Hooks (deshalb ein Command-Hook), `/clear` vergibt eine neue `session_id`, und ein ungültiger Hook verwirft die ganze `--settings`-Datei. Die Orca-Variante mit globalem Hook-Skript wird nicht gebraucht.
 
 ## 10. Umsetzung
 
 - **Eigenes Git-Repository** (Name: **Argus**, Repo `argus`)
 - Repo: https://github.com/viper1979/argus
 - **Glossar und ADRs leben ab jetzt im Repo** (`GLOSSARY.md`, `docs/adr/`). Sie sind die maßgebliche Quelle.
-- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
-- Reihenfolge: **Spike (Abschnitt 9) → Grundgerüst Electron → Projekte und Tasks → Terminals → Hooks und Status → Entfernen → Persistenz und Fortsetzen**
+- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`, `interpretTerminalSignal`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
+- Reihenfolge: **Spike (Abschnitt 9, erledigt) → Grundgerüst Electron → Projekte und Tasks → Terminals → Hooks und Status → Entfernen → Persistenz und Fortsetzen**
