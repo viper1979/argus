@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import type {
   IpcChannel,
   IpcContractShape,
@@ -9,6 +10,16 @@ import type { z } from 'zod';
 import type { Logger } from '../logging/logger';
 import { IpcValidationError, type IpcMessageDirection } from './ipc-validation-error';
 import { MissingIpcHandlerError } from './missing-ipc-handler-error';
+import { UntrustedIpcSenderError } from './untrusted-ipc-sender-error';
+
+/** The part of Electron's `IpcMainInvokeEvent` this module needs. */
+export interface IpcInvokeEventLike {
+  /**
+   * Frame that sent the message; `null` once the frame has been destroyed or navigated away.
+   * Reading `url` of a disposed frame may throw.
+   */
+  readonly senderFrame: { readonly url: string } | null;
+}
 
 /** The part of Electron's `ipcMain` this module needs; allows a fake in tests. */
 export interface IpcMainLike {
@@ -17,7 +28,10 @@ export interface IpcMainLike {
    * @param channel Channel name in the form `domain:action`.
    * @param listener Receives the Electron event and the payload; its return value is the reply.
    */
-  handle(channel: string, listener: (event: unknown, ...args: unknown[]) => unknown): void;
+  handle(
+    channel: string,
+    listener: (event: IpcInvokeEventLike, ...args: unknown[]) => unknown,
+  ): void;
 }
 
 /** Everything needed to wire a contract to its handlers. */
@@ -26,7 +40,15 @@ export interface RegisterIpcHandlersOptions<TContract extends IpcContractShape> 
   readonly contract: TContract;
   readonly handlers: IpcHandlers<TContract>;
   readonly logger: Logger;
+  /**
+   * URL the app's own renderer is loaded from: the Vite dev server in dev mode,
+   * the `file:` URL of the built `index.html` otherwise. Messages from any other frame are rejected.
+   */
+  readonly allowedRendererUrl: URL;
 }
+
+/** Protocol of URLs that point to local files, as reported by `URL.protocol`. */
+const FILE_PROTOCOL = 'file:';
 
 /** Handler of one endpoint after the contract types have been erased for iteration. */
 type UntypedHandler = (request: unknown) => unknown;
@@ -49,11 +71,12 @@ interface EndpointBinding {
 export function registerIpcHandlers<TContract extends IpcContractShape>(
   options: RegisterIpcHandlersOptions<TContract>,
 ): void {
-  const { ipcMain, contract, handlers, logger } = options;
+  const { ipcMain, contract, handlers, logger, allowedRendererUrl } = options;
   const bindings = bindEndpointsToHandlers(contract, handlers);
 
   for (const { channel, endpoint, handler } of bindings) {
-    ipcMain.handle(channel, async (_event, payload) => {
+    ipcMain.handle(channel, async (event, payload) => {
+      rejectUntrustedSender(event, allowedRendererUrl, { channel, logger });
       const request = parseOrReject(endpoint.request, payload, {
         channel,
         direction: 'request',
@@ -107,6 +130,119 @@ interface EndpointContext {
 /** Where a value is validated, used for logging and the rejection error. */
 interface ValidationContext extends EndpointContext {
   readonly direction: IpcMessageDirection;
+}
+
+/**
+ * Rejects a message that was not sent by the app's own renderer.
+ * @param event The Electron invoke event carrying the sending frame.
+ * @param allowedRendererUrl URL the app's renderer is loaded from.
+ * @param context Channel and logger.
+ * @throws UntrustedIpcSenderError if the sender is not the app's renderer.
+ */
+function rejectUntrustedSender(
+  event: IpcInvokeEventLike,
+  allowedRendererUrl: URL,
+  context: EndpointContext,
+): void {
+  const senderUrl = parseSenderUrl(event);
+  const isTrustedSender = senderUrl !== null && isAllowedRendererUrl(senderUrl, allowedRendererUrl);
+  if (isTrustedSender) {
+    return;
+  }
+
+  const { channel, logger } = context;
+  const senderOrigin = senderUrl === null ? null : describeSenderOrigin(senderUrl);
+  logger.warn(`Rejected IPC request from untrusted sender on ${channel}`, {
+    channel,
+    senderOrigin,
+  });
+  throw new UntrustedIpcSenderError(channel, senderOrigin);
+}
+
+/**
+ * Reads the URL of the sending frame.
+ * @param event The Electron invoke event.
+ * @returns The parsed URL, or `null` if the frame is gone or its URL cannot be parsed.
+ */
+function parseSenderUrl(event: IpcInvokeEventLike): URL | null {
+  const rawSenderUrl = readSenderFrameUrl(event);
+  if (rawSenderUrl === null || !URL.canParse(rawSenderUrl)) {
+    return null;
+  }
+  return new URL(rawSenderUrl);
+}
+
+/**
+ * Reads the raw URL of the sending frame without letting a disposed frame break the request.
+ * @param event The Electron invoke event.
+ * @returns The frame URL, or `null` if there is no frame or it can no longer be read.
+ */
+function readSenderFrameUrl(event: IpcInvokeEventLike): string | null {
+  try {
+    return event.senderFrame?.url ?? null;
+  } catch {
+    // Catch-all on purpose: Electron throws a plain Error (no own type) when a WebFrameMain is
+    // read after its render frame was disposed. Such a sender counts as missing and is rejected.
+    return null;
+  }
+}
+
+/**
+ * Reduces a sender URL to its origin, so tokens in query or hash never reach the log.
+ * Every file: URL has the opaque origin "null", so for files the path is kept instead.
+ * @param senderUrl URL of the sending frame.
+ * @returns The origin for http(s) senders, the URL without query and hash for files.
+ */
+function describeSenderOrigin(senderUrl: URL): string {
+  if (senderUrl.protocol !== FILE_PROTOCOL) {
+    return senderUrl.origin;
+  }
+  const fileUrlWithoutQueryOrHash = new URL(senderUrl.href);
+  fileUrlWithoutQueryOrHash.search = '';
+  fileUrlWithoutQueryOrHash.hash = '';
+  return fileUrlWithoutQueryOrHash.href;
+}
+
+/**
+ * Checks whether a frame URL belongs to the app's renderer. Query and hash are ignored,
+ * so in-app routing does not matter.
+ * @param senderUrl URL of the sending frame.
+ * @param allowedRendererUrl URL the app's renderer is loaded from.
+ * @returns `true` if the sender is the app's renderer.
+ */
+function isAllowedRendererUrl(senderUrl: URL, allowedRendererUrl: URL): boolean {
+  // Every file: URL has the opaque origin "null", so the origin alone would let any local
+  // HTML file through. A built renderer must therefore match the exact index.html path.
+  if (allowedRendererUrl.protocol === FILE_PROTOCOL) {
+    const senderPath = toComparableWindowsPath(senderUrl);
+    return senderPath !== null && senderPath === toComparableWindowsPath(allowedRendererUrl);
+  }
+  return senderUrl.origin === allowedRendererUrl.origin;
+}
+
+/**
+ * Turns a file: URL into a Windows path that can be compared with another one.
+ * Comparing paths instead of URLs covers the UNC server name (`\\server\share`) and
+ * percent-encoded characters; lower-casing covers that Windows paths are case-insensitive
+ * (ADR 0002: Windows only) while Chromium upper-cases the drive letter and pathToFileURL
+ * keeps the case it was given.
+ * @param fileUrl A URL with any protocol.
+ * @returns The lower-cased Windows path, or `null` if the URL is no valid Windows file URL.
+ */
+function toComparableWindowsPath(fileUrl: URL): string | null {
+  if (fileUrl.protocol !== FILE_PROTOCOL) {
+    return null;
+  }
+  try {
+    return fileURLToPath(fileUrl, { windows: true }).toLowerCase();
+  } catch (error: unknown) {
+    // fileURLToPath throws a TypeError for file: URLs that are no valid Windows path,
+    // e.g. with an encoded backslash; such a sender is treated as untrusted.
+    if (error instanceof TypeError) {
+      return null;
+    }
+    throw error;
+  }
 }
 
 /**

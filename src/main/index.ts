@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { ipcContract } from '@shared/ipc/contract';
 import { app, BrowserWindow, ipcMain } from 'electron';
 import { createIpcHandlers } from './ipc/ipc-handlers';
@@ -16,6 +17,19 @@ const RENDERER_HTML_PATH = join(__dirname, '../renderer/index.html');
 
 /** Set by electron-vite in dev mode; points to the Vite dev server of the renderer. */
 const RENDERER_DEV_SERVER_URL = process.env['ELECTRON_RENDERER_URL'];
+
+/**
+ * Determines where the renderer is loaded from. Used both for loading the window and for
+ * validating IPC senders, so the two can never disagree.
+ * @returns The Vite dev server URL in an unpackaged dev run, otherwise the built `index.html`.
+ */
+function resolveRendererUrl(): URL {
+  if (!app.isPackaged && RENDERER_DEV_SERVER_URL) {
+    return new URL(RENDERER_DEV_SERVER_URL);
+  }
+  // pathToFileURL turns the Windows path (D:\...) into a proper file:///D:/... URL.
+  return pathToFileURL(RENDERER_HTML_PATH);
+}
 
 /**
  * Creates the main window. The renderer gets no Node access and reaches the main process
@@ -47,11 +61,7 @@ function createMainWindow(): void {
     event.preventDefault();
   });
 
-  if (!app.isPackaged && RENDERER_DEV_SERVER_URL) {
-    void mainWindow.loadURL(RENDERER_DEV_SERVER_URL);
-  } else {
-    void mainWindow.loadFile(RENDERER_HTML_PATH);
-  }
+  void mainWindow.loadURL(resolveRendererUrl().href);
 }
 
 /** Exit code when the app cannot start, e.g. because an IPC handler is missing. */
@@ -64,6 +74,7 @@ function startApp(): void {
     contract: ipcContract,
     handlers: createIpcHandlers(),
     logger: createConsoleLogger('ipc'),
+    allowedRendererUrl: resolveRendererUrl(),
   });
 
   createMainWindow();
