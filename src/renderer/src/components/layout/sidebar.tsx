@@ -11,7 +11,9 @@ import { useAppInfo } from '@renderer/hooks/use-app-info';
 import { useProjects } from '@renderer/hooks/use-projects';
 import type { TasksState } from '@renderer/hooks/use-tasks';
 import { cn } from '@renderer/lib/utils';
-import { taskViewStore } from '@renderer/stores/task-view-store';
+import { taskViewStore, useTaskView } from '@renderer/stores/task-view-store';
+import { formatAgentSessionStatusLine } from '@renderer/agent-sessions/agent-session-status-display';
+import { AgentSessionStatusDot } from '@renderer/components/agent-sessions/agent-session-status-dot';
 
 /** German message per reason why a folder could not be added. */
 const ADD_PROJECT_FAILURE_MESSAGES: Record<
@@ -40,6 +42,7 @@ interface ProjectTaskListProps {
 /** The tasks below one project heading; a click opens the task view. */
 function ProjectTaskList(props: ProjectTaskListProps): React.JSX.Element | null {
   const { tasks, selectedTaskId } = props;
+  const agentSessionStatusByTask = useTaskView((state) => state.agentSessionStatusByTask);
   if (tasks === null) {
     return null;
   }
@@ -48,25 +51,41 @@ function ProjectTaskList(props: ProjectTaskListProps): React.JSX.Element | null 
   }
   return (
     <ul>
-      {tasks.map((task) => (
-        <li key={task.id}>
-          <button
-            type="button"
-            aria-current={task.id === selectedTaskId ? 'true' : undefined}
-            className={cn(
-              'flex w-full items-center gap-2 rounded-md px-2 py-1 text-left hover:bg-sidebar-accent',
-              task.id === selectedTaskId && 'bg-sidebar-accent text-sidebar-accent-foreground',
-            )}
-            title={`${task.branch}\n${task.worktreePath}`}
-            onClick={() => {
-              taskViewStore.getState().selectTask(task.id);
-            }}
-          >
-            <GitBranch className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="truncate">{task.name}</span>
-          </button>
-        </li>
-      ))}
+      {tasks.map((task) => {
+        const agentSessionStatus = agentSessionStatusByTask[task.id];
+        return (
+          <li key={task.id}>
+            <button
+              type="button"
+              aria-current={task.id === selectedTaskId ? 'true' : undefined}
+              className={cn(
+                'grid w-full grid-cols-[0.875rem_1fr] items-center gap-x-2 rounded-md px-2 py-1 text-left hover:bg-sidebar-accent',
+                task.id === selectedTaskId && 'bg-sidebar-accent text-sidebar-accent-foreground',
+              )}
+              title={`${task.branch}\n${task.worktreePath}`}
+              onClick={() => {
+                // Opens the agent session tab right away if it waits for the user (concept 5.4).
+                taskViewStore.getState().openTask(task.id);
+              }}
+            >
+              {agentSessionStatus ? (
+                <AgentSessionStatusDot status={agentSessionStatus.status} className="mx-auto" />
+              ) : (
+                <GitBranch className="size-3.5 text-muted-foreground" aria-hidden />
+              )}
+              <span className="truncate">{task.name}</span>
+              {agentSessionStatus && (
+                <span className="col-start-2 truncate text-xs text-muted-foreground">
+                  {formatAgentSessionStatusLine(
+                    agentSessionStatus.status,
+                    agentSessionStatus.subagentCount,
+                  )}
+                </span>
+              )}
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }

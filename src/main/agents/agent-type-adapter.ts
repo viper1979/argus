@@ -1,5 +1,8 @@
+import type { AgentSessionStatus } from '@shared/domain/agent-session';
 import type { AgentType } from '@shared/domain/project';
 import type { z } from 'zod';
+import type { AgentStatusEvent } from '../status/agent-status-event';
+import type { TerminalSignal } from '../terminals/terminal-signal';
 
 /**
  * Everything Argus needs to know about one agent CLI (concept 4). The core only talks to this
@@ -40,7 +43,48 @@ export interface AgentTypeAdapter {
     name: string,
     inheritedEnvironment: Readonly<Record<string, string>>,
   ): boolean;
+
+  /**
+   * Translates one hook payload into what happened in the agent session (concept 3). Rules that
+   * depend on the agent's payload format, e.g. ignoring events of subagents, apply here.
+   * @param payload The parsed JSON body of a hook request, not yet validated.
+   * @returns The event, `null` for a valid but irrelevant payload, or why it is invalid.
+   */
+  interpretHookEvent(payload: unknown): HookEventInterpretation;
+
+  /**
+   * Creates the interpreter of the terminal signals of one agent session, e.g. for the interrupt
+   * detection of ADR 0005. One per agent session, since it remembers earlier signals.
+   * @param now Clock in milliseconds; signals arrive synchronously, so it dates them.
+   * @returns The interpreter.
+   */
+  createTerminalSignalInterpreter(now: () => number): TerminalSignalInterpreter;
 }
+
+/** Translates the terminal signals of one agent session into status events (ADR 0005). */
+export interface TerminalSignalInterpreter {
+  /**
+   * Interprets one terminal signal.
+   * @param signal Key press or title change, in the order they happened.
+   * @param currentStatus Status of the agent session now; `null` before its first status.
+   * @returns The event, or `null` if the signal alone means nothing (yet).
+   */
+  interpret(
+    signal: TerminalSignal,
+    currentStatus: AgentSessionStatus | null,
+  ): AgentStatusEvent | null;
+}
+
+/** Outcome of interpreting a hook payload; an invalid one is logged and ignored. */
+export type HookEventInterpretation =
+  | { readonly ok: true; readonly event: AgentStatusEvent | null }
+  | {
+      readonly ok: false;
+      /** Name of the hook event if the payload names one; safe to log. */
+      readonly eventName: string | null;
+      /** Paths of the invalid fields, e.g. `session_id`; never their values (prompts, output). */
+      readonly invalidPaths: readonly string[];
+    };
 
 /** What an adapter needs to know to start an agent session. */
 export interface AgentLaunchContext {

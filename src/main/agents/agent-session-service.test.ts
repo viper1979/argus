@@ -1,4 +1,5 @@
 import type { OpenTerminalRequest, OpenTerminalResult } from '@shared/domain/terminal';
+import type { AgentSessionStatus } from '@shared/domain/agent-session';
 import type { Task } from '@shared/domain/task';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import type { AgentHooks } from '../hooks/start-agent-hooks';
@@ -6,8 +7,11 @@ import type { Logger } from '../logging/logger';
 import { createEmptyAppState } from '../persistence/app-state';
 import { createAppStateHolder } from '../persistence/app-state-holder';
 import { FakeStateStore } from '../persistence/testing/fake-state-store';
+import type { StatusTracker } from '../status/status-tracker';
+import type { TerminalSignal } from '../terminals/terminal-signal';
 import type { TerminalLaunch, TerminalService } from '../terminals/terminal-service';
 import { createAgentSessionService, type AgentSessionService } from './agent-session-service';
+import type { TerminalSignalInterpreter } from './agent-type-adapter';
 import { createFakeAgentTypeAdapter } from './testing/fake-agent-type-adapter';
 import { createFakeLogger } from '../logging/testing/fake-logger';
 
@@ -38,6 +42,12 @@ const AVAILABLE_HOOKS: AgentHooks = {
 /** Size xterm.js measured before the agent session tab was shown. */
 const INITIAL_SIZE = { cols: 120, rows: 30 };
 
+/** Title the fake interpreter translates into an interrupt; any other signal means nothing. */
+const INTERRUPT_TITLE = 'fake-interrupt';
+
+/** Time of the injected clock; only compared for identity. */
+const NOW = 1_700_000_000_000;
+
 describe('AgentSessionService', () => {
   let stateStore: FakeStateStore;
   let openTerminal: Mock<
@@ -45,6 +55,12 @@ describe('AgentSessionService', () => {
   >;
   let agentSessionService: AgentSessionService;
   let logError: Mock<Logger['error']>;
+  let logWarn: Mock<Logger['warn']>;
+  let applyStatus: Mock<StatusTracker['apply']>;
+  let currentStatus: AgentSessionStatus | null;
+  let interpretedSignals: { signal: TerminalSignal; status: AgentSessionStatus | null }[];
+  let createInterpreter: Mock<(now: () => number) => TerminalSignalInterpreter>;
+  const now = (): number => NOW;
 
   /**
    * Creates the service under test with the shared fakes.
@@ -59,13 +75,22 @@ describe('AgentSessionService', () => {
       close: vi.fn(() => Promise.resolve()),
       closeAll: vi.fn(() => Promise.resolve()),
     };
-    const logger: Logger = createFakeLogger({ error: logError });
+    const logger: Logger = createFakeLogger({ error: logError, warn: logWarn });
     return createAgentSessionService({
       stateHolder: createAppStateHolder(stateStore),
       terminalService,
-      adapters: { 'claude-code': createFakeAgentTypeAdapter() },
+      adapters: {
+        'claude-code': createFakeAgentTypeAdapter({
+          createTerminalSignalInterpreter: createInterpreter,
+        }),
+      },
       hooks,
       generateId: () => AGENT_SESSION_ID,
+      statusTracker: {
+        apply: applyStatus,
+        getStatus: (agentSessionId) => (agentSessionId === AGENT_SESSION_ID ? currentStatus : null),
+      },
+      now,
       logger,
     });
   }
@@ -73,6 +98,18 @@ describe('AgentSessionService', () => {
   beforeEach(() => {
     stateStore = new FakeStateStore({ ...createEmptyAppState(), tasks: [LOGIN_TASK] });
     logError = vi.fn();
+    logWarn = vi.fn();
+    applyStatus = vi.fn();
+    currentStatus = 'working';
+    interpretedSignals = [];
+    createInterpreter = vi.fn(() => ({
+      interpret: (signal, status) => {
+        interpretedSignals.push({ signal, status });
+        return signal.kind === 'title' && signal.title === INTERRUPT_TITLE
+          ? { kind: 'interrupted' }
+          : null;
+      },
+    }));
     openTerminal = vi.fn(() => Promise.resolve({ ok: true as const, terminalId: TERMINAL_ID }));
     agentSessionService = createService(AVAILABLE_HOOKS);
   });
@@ -289,5 +326,180 @@ describe('AgentSessionService', () => {
     expect(result).toEqual({ ok: false, reason: 'task-not-found' });
     expect(openTerminal).not.toHaveBeenCalled();
     expect(stateStore.savedState).toBeNull();
+  });
+
+  it('recordConversationId_OfSavedAgentSession_StoresIt', async () => {
+    // Arrange
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Act: SessionStart reports Claude's session_id (concept 5.3, step 6)
+    await agentSessionService.recordConversationId(AGENT_SESSION_ID, 'conversation-1');
+
+    // Assert
+    expect(stateStore.savedState?.agentSessions).toEqual([
+      {
+        id: AGENT_SESSION_ID,
+        taskId: LOGIN_TASK.id,
+        agentType: 'claude-code',
+        conversationId: 'conversation-1',
+      },
+    ]);
+  });
+
+  it('recordConversationId_Twice_KeepsTheLatest', async () => {
+    // Arrange
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+    await agentSessionService.recordConversationId(AGENT_SESSION_ID, 'conversation-1');
+
+    // Act: /clear starts a new conversation with a new session_id (concept 3, rule 6)
+    await agentSessionService.recordConversationId(AGENT_SESSION_ID, 'conversation-2');
+
+    // Assert
+    expect(stateStore.savedState?.agentSessions.map((saved) => saved.conversationId)).toEqual([
+      'conversation-2',
+    ]);
+  });
+
+  it('recordConversationId_OfUnknownAgentSession_WarnsWithoutSaving', async () => {
+    // Arrange: e.g. a hook of a Claude that Argus did not start in this app run.
+    const unknownAgentSessionId = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+
+    // Act
+    await agentSessionService.recordConversationId(unknownAgentSessionId, 'conversation-1');
+
+    // Assert
+    expect(stateStore.savedState).toBeNull();
+    expect(logWarn).toHaveBeenCalledWith('Conversation id for unknown agent session ignored', {
+      agentSessionId: unknownAgentSessionId,
+    });
+  });
+
+  it('findTaskId_OfStartedAgentSession_ReturnsItsTask', async () => {
+    // Arrange
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Act
+    const taskId = agentSessionService.findTaskId(AGENT_SESSION_ID);
+
+    // Assert
+    expect(taskId).toBe(LOGIN_TASK.id);
+  });
+
+  it('findTaskId_AfterTerminalExited_StillReturnsItsTask', async () => {
+    // Arrange: "Beendet" after the PTY ended must still reach the task in the sidebar.
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+    agentSessionService.handleTerminalExit(TERMINAL_ID);
+
+    // Act
+    const taskId = agentSessionService.findTaskId(AGENT_SESSION_ID);
+
+    // Assert
+    expect(taskId).toBe(LOGIN_TASK.id);
+  });
+
+  it('findTaskId_OfUnknownAgentSession_ReturnsNull', async () => {
+    // Arrange: e.g. the header of a hook of a Claude that Argus did not start, while another
+    // agent session runs.
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+    const unknownAgentSessionId = '0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d';
+
+    // Act
+    const taskId = agentSessionService.findTaskId(unknownAgentSessionId);
+
+    // Assert
+    expect(taskId).toBeNull();
+  });
+
+  it('findTaskId_AfterTerminalCouldNotOpen_ReturnsNull', async () => {
+    // Arrange: nothing ran, so no hook event can belong to it.
+    openTerminal.mockResolvedValueOnce({ ok: false, reason: 'shell-unavailable' });
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Act
+    const taskId = agentSessionService.findTaskId(AGENT_SESSION_ID);
+
+    // Assert
+    expect(taskId).toBeNull();
+  });
+
+  /**
+   * Starts the agent session of the login task and returns the signal receiver it launched with.
+   * @returns What the terminal service would call for every terminal signal.
+   */
+  async function startAndGetSignalReceiver(): Promise<(signal: TerminalSignal) => void> {
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+    const [, launch] = openTerminal.mock.calls[0] ?? [];
+    if (!launch?.onSignal) {
+      throw new Error('The agent session was launched without signal receiver');
+    }
+    return launch.onSignal;
+  }
+
+  it('start_WithKnownTask_CreatesInterpreterWithInjectedClock', async () => {
+    // Act
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Assert: one interpreter per agent session, dated by the service's clock
+    expect(createInterpreter).toHaveBeenCalledExactlyOnceWith(now);
+  });
+
+  it('terminalSignal_OfAgentSession_ReachesInterpreterWithCurrentStatus', async () => {
+    // Arrange
+    const onSignal = await startAndGetSignalReceiver();
+    currentStatus = 'waiting';
+
+    // Act
+    onSignal({ kind: 'input', data: '' });
+
+    // Assert: the status at the time of the signal, not at the start
+    expect(interpretedSignals).toEqual([
+      { signal: { kind: 'input', data: '' }, status: 'waiting' },
+    ]);
+  });
+
+  it('terminalSignal_InterpretedAsEvent_AppliesItToAgentSession', async () => {
+    // Arrange
+    const onSignal = await startAndGetSignalReceiver();
+
+    // Act
+    onSignal({ kind: 'title', title: INTERRUPT_TITLE });
+
+    // Assert
+    expect(applyStatus).toHaveBeenCalledExactlyOnceWith(AGENT_SESSION_ID, { kind: 'interrupted' });
+  });
+
+  it('terminalSignal_InterpretedAsNothing_AppliesNothing', async () => {
+    // Arrange
+    const onSignal = await startAndGetSignalReceiver();
+
+    // Act
+    onSignal({ kind: 'title', title: 'some title' });
+
+    // Assert
+    expect(applyStatus).not.toHaveBeenCalled();
+  });
+
+  it('handleTerminalExit_OfAgentSessionTerminal_EndsAgentSession', async () => {
+    // Arrange
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Act: e.g. `exit` in its PowerShell or a crashed agent without SessionEnd
+    agentSessionService.handleTerminalExit(TERMINAL_ID);
+
+    // Assert
+    expect(applyStatus).toHaveBeenCalledExactlyOnceWith(AGENT_SESSION_ID, {
+      kind: 'session-ended',
+    });
+  });
+
+  it('handleTerminalExit_OfOtherTerminal_AppliesNothing', async () => {
+    // Arrange
+    await agentSessionService.start({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+    // Act
+    agentSessionService.handleTerminalExit(OTHER_TERMINAL_ID);
+
+    // Assert
+    expect(applyStatus).not.toHaveBeenCalled();
   });
 });

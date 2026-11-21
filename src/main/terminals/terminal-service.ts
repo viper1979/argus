@@ -12,6 +12,8 @@ import {
 import { encodePowerShellCommand } from './powershell';
 import type { PtyProcess, PtySpawnOptions, SpawnPty } from './pty';
 import { ShellExecutableNotFoundError } from './shell-executable-not-found-error';
+import type { TerminalSignal } from './terminal-signal';
+import { createTerminalTitleParser } from './terminal-title-parser';
 
 /** Owns the terminals (glossary: Terminal) of all tasks: starts, feeds and ends their PTYs. */
 export interface TerminalService {
@@ -60,6 +62,11 @@ export interface TerminalService {
 export interface TerminalLaunch extends EnvironmentAdjustments {
   /** PowerShell command line; the shell stays open after it ended. */
   readonly startCommand: string;
+  /**
+   * Receives key presses and title changes of this terminal only, e.g. to detect an interrupt
+   * of the agent (ADR 0005). Without it the terminal reports no signals.
+   */
+  readonly onSignal?: (signal: TerminalSignal) => void;
 }
 
 /** A terminal whose process is running. */
@@ -67,6 +74,8 @@ interface RunningTerminal {
   readonly pty: PtyProcess;
   /** Resolves once the process has ended, for whatever reason. */
   readonly exited: Promise<void>;
+  /** Receiver of its signals, if whoever launched it asked for them. */
+  readonly onSignal: ((signal: TerminalSignal) => void) | undefined;
 }
 
 /** Receives what happens in the terminals; in production it forwards to the renderer. */
@@ -246,14 +255,22 @@ export function createTerminalService(options: TerminalServiceOptions): Terminal
           resolveExited();
         });
       });
-      runningTerminals.set(terminalId, { pty: shell, exited });
+      const onSignal = launch?.onSignal;
+      runningTerminals.set(terminalId, { pty: shell, exited, onSignal });
+      // Only terminals that want signals pay for scanning their output.
+      const titleParser = onSignal ? createTerminalTitleParser() : null;
       shell.onData((data) => {
         events.output(terminalId, data);
+        for (const title of titleParser?.feed(data) ?? []) {
+          onSignal?.({ kind: 'title', title });
+        }
       });
       return { ok: true, terminalId };
     },
     write: (terminalId, data) => {
-      runningTerminals.get(terminalId)?.pty.write(data);
+      const terminal = runningTerminals.get(terminalId);
+      terminal?.pty.write(data);
+      terminal?.onSignal?.({ kind: 'input', data });
     },
     resize: (terminalId, size) => {
       runningTerminals.get(terminalId)?.pty.resize(size);

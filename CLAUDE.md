@@ -38,6 +38,7 @@ Vor dem Planen eines Features oder bei Fragen zum Umfang: [docs/konzept.md](docs
 | Agent-Session | `AgentSession` |
 | Konversations-ID | `conversationId` |
 | Subagent | `Subagent` |
+| Terminal-Signal | `TerminalSignal` |
 | Status Arbeitet / Wartet / Bereit / Fehler / Beendet | `working` / `waiting` / `ready` / `failed` / `ended` |
 
 Ein neuer Fachbegriff oder eine geänderte Bedeutung wird im selben Change in `GLOSSARY.md` und in dieser Tabelle nachgezogen. UI-Texte sind deutsch.

@@ -5,6 +5,8 @@ import {
   AGENT_SESSION_TOKEN_VARIABLE,
 } from '../agent-session-environment';
 import type { AgentTypeAdapter } from '../agent-type-adapter';
+import { interpretClaudeHookEvent } from './claude-hook-event';
+import { createClaudeTerminalInterruptInterpreter } from './claude-terminal-interrupt';
 import {
   CLAUDE_HTTP_HOOK_EVENTS,
   claudeHookSettingsSchema,
@@ -62,6 +64,8 @@ export function createClaudeCodeAdapter(): AgentTypeAdapter {
       );
       return isInsideClaudeSession && name.toUpperCase().startsWith(CLAUDE_VARIABLE_PREFIX);
     },
+    interpretHookEvent: interpretClaudeHookEvent,
+    createTerminalSignalInterpreter: createClaudeTerminalInterruptInterpreter,
     buildHookSettings: (port) => {
       const hookUrl = buildHookUrl(port, AGENT_TYPE);
       const httpGroups = [

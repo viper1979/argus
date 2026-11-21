@@ -1,3 +1,4 @@
+import type { TaskAgentSessionStatus } from '@shared/domain/agent-session';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { createTaskViewStore, type TaskViewStore } from './task-view-store';
 
@@ -10,6 +11,29 @@ const THIRD_TERMINAL_ID = 'terminal-3';
 const FOURTH_TERMINAL_ID = 'terminal-4';
 /** Title the renderer passes for a Claude Code agent session. */
 const AGENT_TAB_TITLE = 'Claude Code';
+const LOGIN_AGENT_SESSION_ID = 'agent-session-login';
+const EXPORT_AGENT_SESSION_ID = 'agent-session-export';
+
+/**
+ * Builds a status the main process reports for the login task.
+ * @param status The status.
+ * @param subagentCount Running subagents.
+ * @returns The status with agent session and task.
+ */
+function loginStatus(
+  status: TaskAgentSessionStatus['status'],
+  subagentCount = 0,
+): TaskAgentSessionStatus {
+  return { agentSessionId: LOGIN_AGENT_SESSION_ID, taskId: LOGIN_TASK_ID, status, subagentCount };
+}
+
+/** Status of the export task's agent session. */
+const EXPORT_WORKING: TaskAgentSessionStatus = {
+  agentSessionId: EXPORT_AGENT_SESSION_ID,
+  taskId: EXPORT_TASK_ID,
+  status: 'working',
+  subagentCount: 0,
+};
 
 describe('TaskViewStore', () => {
   let store: TaskViewStore;
@@ -154,5 +178,115 @@ describe('TaskViewStore', () => {
 
     // Assert
     expect(store.getState().selectedTaskId).toBe(EXPORT_TASK_ID);
+  });
+
+  it('applyAgentSessionStatus_ForTask_KeepsItForThatTaskOnly', () => {
+    // Act
+    store.getState().applyAgentSessionStatus(loginStatus('waiting', 2));
+
+    // Assert
+    expect(store.getState().agentSessionStatusByTask).toEqual({
+      [LOGIN_TASK_ID]: loginStatus('waiting', 2),
+    });
+  });
+
+  it('applyAgentSessionStatus_Twice_KeepsTheLatest', () => {
+    // Arrange
+    store.getState().applyAgentSessionStatus(loginStatus('working'));
+
+    // Act
+    store.getState().applyAgentSessionStatus(loginStatus('ready'));
+
+    // Assert
+    expect(store.getState().agentSessionStatusByTask[LOGIN_TASK_ID]).toEqual(loginStatus('ready'));
+  });
+
+  it('loadAgentSessionStatuses_IntoEmptyStore_TakesAll', () => {
+    // Act
+    store.getState().loadAgentSessionStatuses([loginStatus('ready'), EXPORT_WORKING]);
+
+    // Assert
+    expect(store.getState().agentSessionStatusByTask).toEqual({
+      [LOGIN_TASK_ID]: loginStatus('ready'),
+      [EXPORT_TASK_ID]: EXPORT_WORKING,
+    });
+  });
+
+  it('loadAgentSessionStatuses_AfterEventForTask_KeepsTheEventStatus', () => {
+    // Arrange: the event overtook the list, so the listed status is older
+    store.getState().applyAgentSessionStatus(loginStatus('waiting'));
+
+    // Act
+    store.getState().loadAgentSessionStatuses([loginStatus('working'), EXPORT_WORKING]);
+
+    // Assert
+    expect(store.getState().agentSessionStatusByTask).toEqual({
+      [LOGIN_TASK_ID]: loginStatus('waiting'),
+      [EXPORT_TASK_ID]: EXPORT_WORKING,
+    });
+  });
+
+  it('openTask_WhileAgentSessionWaits_SelectsTaskAndShowsAgentSessionTab', () => {
+    // Arrange: a terminal tab is in front of the agent session tab
+    const { addAgentSessionTerminal, addTerminal, applyAgentSessionStatus } = store.getState();
+    addAgentSessionTerminal(LOGIN_TASK_ID, FIRST_TERMINAL_ID, AGENT_TAB_TITLE);
+    addTerminal(LOGIN_TASK_ID, SECOND_TERMINAL_ID);
+    applyAgentSessionStatus(loginStatus('waiting'));
+
+    // Act
+    store.getState().openTask(LOGIN_TASK_ID);
+
+    // Assert: permissions and questions are answered in the agent session (concept 5.4)
+    const state = store.getState();
+    expect(state.selectedTaskId).toBe(LOGIN_TASK_ID);
+    expect(state.activeTerminalByTask[LOGIN_TASK_ID]).toBe(FIRST_TERMINAL_ID);
+  });
+
+  it.each(['working', 'ready', 'failed', 'ended'] as const)(
+    'openTask_WhileAgentSessionIs%s_KeepsActiveTab',
+    (status) => {
+      // Arrange
+      const { addAgentSessionTerminal, addTerminal, applyAgentSessionStatus } = store.getState();
+      addAgentSessionTerminal(LOGIN_TASK_ID, FIRST_TERMINAL_ID, AGENT_TAB_TITLE);
+      addTerminal(LOGIN_TASK_ID, SECOND_TERMINAL_ID);
+      applyAgentSessionStatus(loginStatus(status));
+
+      // Act
+      store.getState().openTask(LOGIN_TASK_ID);
+
+      // Assert
+      const state = store.getState();
+      expect(state.selectedTaskId).toBe(LOGIN_TASK_ID);
+      expect(state.activeTerminalByTask[LOGIN_TASK_ID]).toBe(SECOND_TERMINAL_ID);
+    },
+  );
+
+  it('openTask_WhileWaitingWithoutAgentSessionTab_OnlySelectsTask', () => {
+    // Arrange: e.g. after a reload of the renderer, which lost its tabs
+    store.getState().addTerminal(LOGIN_TASK_ID, THIRD_TERMINAL_ID);
+    store.getState().addTerminal(LOGIN_TASK_ID, FOURTH_TERMINAL_ID);
+    store.getState().applyAgentSessionStatus(loginStatus('waiting'));
+
+    // Act
+    store.getState().openTask(LOGIN_TASK_ID);
+
+    // Assert
+    const state = store.getState();
+    expect(state.selectedTaskId).toBe(LOGIN_TASK_ID);
+    expect(state.activeTerminalByTask[LOGIN_TASK_ID]).toBe(FOURTH_TERMINAL_ID);
+  });
+
+  it('openTask_WhileOtherTaskWaits_KeepsActiveTab', () => {
+    // Arrange: only the status of the opened task counts
+    const { addAgentSessionTerminal, addTerminal, applyAgentSessionStatus } = store.getState();
+    addAgentSessionTerminal(LOGIN_TASK_ID, FIRST_TERMINAL_ID, AGENT_TAB_TITLE);
+    addTerminal(LOGIN_TASK_ID, SECOND_TERMINAL_ID);
+    applyAgentSessionStatus({ ...EXPORT_WORKING, status: 'waiting' });
+
+    // Act
+    store.getState().openTask(LOGIN_TASK_ID);
+
+    // Assert
+    expect(store.getState().activeTerminalByTask[LOGIN_TASK_ID]).toBe(SECOND_TERMINAL_ID);
   });
 });

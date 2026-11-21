@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Bot, FolderOpen, GitBranch, Plus, SquareTerminal, X } from 'lucide-react';
 import type { Task } from '@shared/domain/task';
+import { AgentSessionStatusDot } from '@renderer/components/agent-sessions/agent-session-status-dot';
 import { TerminalPane } from '@renderer/components/tasks/terminal-pane';
 import { Button } from '@renderer/components/ui/button';
 import { useTerminals, type OpenTerminalFailureReason } from '@renderer/hooks/use-terminals';
@@ -59,6 +60,9 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
     task.id,
   );
   const agentSessionFailure = useTaskView((state) => state.agentSessionFailureByTask[task.id]);
+  const agentSessionStatus = useTaskView(
+    (state) => state.agentSessionStatusByTask[task.id]?.status,
+  );
   const [actionError, setActionError] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
 
@@ -118,7 +122,12 @@ export function TaskView(props: TaskViewProps): React.JSX.Element {
                   activateTerminal(tab.terminalId);
                 }}
               >
-                <TabIcon className="size-3.5" aria-hidden />
+                {/* The agent session tab shows its status as in the sidebar (concept 6). */}
+                {tab.kind === 'agent-session' && agentSessionStatus ? (
+                  <AgentSessionStatusDot status={agentSessionStatus} className="mx-0.5" />
+                ) : (
+                  <TabIcon className="size-3.5" aria-hidden />
+                )}
                 {tab.title}
               </button>
               {isClosable && (

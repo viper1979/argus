@@ -79,19 +79,23 @@ classDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> Bereit: SessionStart
+    [*] --> Beendet: SessionEnd / PTY-Ende
     Bereit --> Arbeitet: UserPromptSubmit
     Arbeitet --> Wartet: PermissionRequest / AskUserQuestion
     Wartet --> Arbeitet: PostToolUse / PostToolUseFailure / UserPromptSubmit
     Arbeitet --> Bereit: Stop
+    Wartet --> Bereit: Stop
     Arbeitet --> Bereit: Abbruch (Escape/Strg+C + Titel ✳)
     Arbeitet --> Fehler: StopFailure
     Fehler --> Arbeitet: UserPromptSubmit
-    Bereit --> Beendet: SessionEnd (außer clear)
-    Fehler --> Beendet: SessionEnd (außer clear)
-    Wartet --> Beendet: SessionEnd (außer clear)
-    Arbeitet --> Beendet: SessionEnd (außer clear)
+    Bereit --> Beendet: SessionEnd / PTY-Ende
+    Fehler --> Beendet: SessionEnd / PTY-Ende
+    Wartet --> Beendet: SessionEnd / PTY-Ende
+    Arbeitet --> Beendet: SessionEnd / PTY-Ende
     Beendet --> Bereit: Fortsetzen (--resume, SessionStart)
 ```
+
+Diagramm und Regeln (unten) sind zusammen abschließend. Regel 6 ergänzt die Übergänge durch `/clear` und `/resume`: `SessionStart` mit `startup`, `resume`, `clear` oder `fork` und `SessionEnd` mit `clear` oder `resume` setzen aus jedem Status **Bereit**. Events, die weder im Diagramm noch in den Regeln vorkommen (z. B. `Notification` oder ein `PreToolUse` anderer Tools), ändern den Status nicht. Vor dem ersten `SessionStart` hat eine Agent-Session keinen Status, die Sidebar zeigt dann keinen an. Nur `SessionEnd` und das Ende des PTY setzen sie auch ohne Status auf **Beendet**, damit eine Agent-Session, deren `SessionStart` verloren ging, nie als laufend erscheint. `SessionEnd` meint hier alle Gründe außer `clear` und `resume` (Regel 6).
 
 Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemessen nach etwa 0,3 s. **Bereit** ist dann nur ein kurzer Zwischenstand. Toasts gibt es deshalb nur beim Übergang *aus* **Arbeitet** oder **Wartet**. **Bereit** nach `SessionStart` löst keinen Toast aus.
 
@@ -110,9 +114,12 @@ Beim Start mit Prompt folgt auf `SessionStart` direkt `UserPromptSubmit`, gemess
    - Subagents laufen asynchron. Der Haupt-Agent meldet `Stop` (→ **Bereit**), *während* der Subagent noch läuft. Dessen Ergebnis kommt als synthetisches `UserPromptSubmit` (`<agent-message …>`) zurück, also **Arbeitet**, gefolgt von einem zweiten `Stop`. Der Zähler in der Sidebar zeigt, dass noch Subagents laufen.
 2. **„Wartet“ ist sticky.** Ein `PreToolUse` eines anderen Tools oder Subagents hebt **Wartet** nicht auf. Erst `PostToolUse`/`PostToolUseFailure` des Haupt-Agents, ein neuer Prompt oder `Stop` lösen es auf.
 3. **`AskUserQuestion`** kommt als `PreToolUse` an, bedeutet aber **Wartet**.
-4. **Abbruch durch mich** (Escape bzw. Strg+C): Claude sendet *kein* Event. Argus erkennt den Abbruch am Tastendruck plus Leerlauf-Glyphe `✳` im Terminal-Titel und setzt **Bereit** ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)). Ein offenes `PreToolUse` bleibt dabei ohne `PostToolUse`. Ob das auch aus **Wartet** heraus greift, ist noch ungetestet.
+4. **Abbruch durch mich** (Escape bzw. Strg+C): Claude sendet *kein* Event. Argus erkennt den Abbruch an zwei Terminal-Signalen: Escape oder Strg+C im Status **Arbeitet**, danach innerhalb von 5 s die Leerlauf-Glyphe `✳` im Terminal-Titel. Dann setzt Argus **Bereit** ([ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)). Ein offenes `PreToolUse` bleibt dabei ohne `PostToolUse`.
+   - **Grenze: Abbruch aus „Wartet“.** Escape in einer Freigabe-Abfrage oder bei `AskUserQuestion` lehnt ab und beendet den Turn, ebenfalls ohne Event. Claude setzt `✳` aber schon, sobald die Abfrage erscheint, danach kommt kein neuer Titel mehr (Smoke-Test zu #8). Argus kann diesen Abbruch deshalb nicht erkennen. **Wartet** bleibt bis zum nächsten Prompt stehen.
 5. **Beendet** wird über `SessionEnd` erkannt. Das kommt bei `/exit` und bei zweimal Strg+C im Leerlauf (`reason: prompt_input_exit`). Ein `/exit`, das *während* der Arbeit eingegeben wird, führt Claude nicht aus. Endet die PTY (z. B. beim Schließen der App), kommt `SessionEnd` mit `reason: other`. Das PTY selbst endet bei `/exit` nicht, weil die PowerShell mit `-NoExit` weiterläuft.
-6. **`/clear`** meldet `SessionEnd` (`reason: clear`) und sofort `SessionStart` (`source: clear`) mit einer **neuen** `session_id`. Die Agent-Session bleibt dieselbe: Status **Bereit**, Subagent-Zähler leeren, neue Konversations-ID merken. Ein `SessionEnd` mit `reason: clear` führt deshalb **nicht** zu **Beendet**.
+   - Endet das PTY der Agent-Session (z. B. `exit` in der PowerShell oder ein Absturz von Claude ohne `SessionEnd`), setzt Argus ebenfalls **Beendet**.
+6. **`/clear` und `/resume`** melden `SessionEnd` (`reason: clear` bzw. `resume`) und sofort `SessionStart` (`source: clear` bzw. `resume`) mit einer **anderen** `session_id`. Die Agent-Session bleibt dieselbe: Status **Bereit**, Subagent-Zähler leeren, neue Konversations-ID merken. Ein `SessionEnd` mit diesen Gründen führt deshalb **nicht** zu **Beendet**.
+   - `SessionStart` mit `source` `startup`, `resume`, `clear` oder `fork` setzt **Bereit**. Mit `compact` (Kontext verdichtet, auch automatisch mitten im Turn) oder einem unbekannten Wert merkt Argus nur die Konversations-ID, der Status bleibt (Hooks-Referenz, geprüft am 2026-11-21).
 
 ## 4. Architektur
 
@@ -137,7 +144,9 @@ flowchart LR
     TerminalService --> PS[pwsh + claude]
     PS -- HTTP-Hooks --> HookServer
     HookServer --> AgentAdapter --> StatusTracker
-    StatusTracker --> Renderer
+    TerminalService -- Terminal-Signale, PTY-Ende --> AgentSessionService
+    AgentSessionService --> StatusTracker
+    StatusTracker -- statusChanged --> Renderer
     TaskService --> WorktreeService
     TaskService --> TerminalService
     AgentSessionService --> AgentAdapter
@@ -169,11 +178,11 @@ Wie Orca, auf das Nötige reduziert:
 | `ProjectService` | Projekte registrieren, Einstellungen pro Projekt |
 | `TaskService` | Tasks anlegen und entfernen, koordiniert Worktree und Terminals |
 | `WorktreeService` | `git worktree add/remove`, Branch löschen, Prüfung „geändert/ungepusht“ |
-| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0) als Terminal-Signale weiter |
-| `AgentSessionService` | Agent-Sessions starten: höchstens eine laufende pro Task, speichert sie in `state.json`, holt Startbefehl und Umgebung vom `AgentTypeAdapter` und öffnet damit ein Terminal |
-| `HookServer` | HTTP auf `127.0.0.1:<port>`, prüft das Token, nimmt Hook-Events an |
+| `TerminalService` | PTYs erzeugen, Ein- und Ausgabe zum Renderer streamen, beenden. Reicht Tastendrücke und Titeländerungen (OSC 0 und OSC 2) als Terminal-Signale weiter |
+| `AgentSessionService` | Agent-Sessions starten: höchstens eine laufende pro Task, speichert sie in `state.json`, holt Startbefehl und Umgebung vom `AgentTypeAdapter` und öffnet damit ein Terminal. Gibt die Terminal-Signale der Agent-Session an ihren Signal-Interpreter, meldet das Ende ihres PTY als **Beendet**, speichert die Konversations-ID und kennt den Task jeder Agent-Session dieses App-Starts |
+| `HookServer` | HTTP auf `127.0.0.1:<port>`, prüft das Token, nimmt Hook-Events an. Die Auswertung ignoriert Events unbekannter Agent-Sessions und ungültige Payloads und protokolliert sie, ohne Inhalte zu loggen |
 | `AgentTypeAdapter` | **Schnittstelle pro Agent-Typ**: Startbefehl, Resume-Befehl, Hook-Konfiguration, Event → Status, Terminal-Signal → Status (Abbruch-Erkennung) |
-| `StatusTracker` | hält den Status pro Agent-Session, wendet die Regeln aus Abschnitt 3 an, löst Notifications aus |
+| `StatusTracker` | hält den Status pro Agent-Session, wendet die Regeln aus Abschnitt 3 an, meldet jede Änderung von Status oder Subagent-Zähler an den Renderer (`agentSession.statusChanged`, beim Laden `agentSession.listStatuses`), löst Notifications aus |
 | `Store` | atomares Lesen und Schreiben von `state.json` |
 
 ### Agent-Typ-Schnittstelle (Skizze)
@@ -198,17 +207,26 @@ interface AgentTypeAdapter {
     name: string,
     inheritedEnvironment: Readonly<Record<string, string>>,
   ): boolean;
-  /** Translates a raw hook payload into a status event, or null if irrelevant. */
-  interpretHookEvent(payload: unknown): AgentStatusEvent | null;
-  /** Translates a terminal signal (key press, title change) into a status event, e.g. an interrupt. */
-  interpretTerminalSignal(signal: TerminalSignal): AgentStatusEvent | null;
+  /** Translates a raw hook payload into a status event, null if irrelevant, or why it is invalid. */
+  interpretHookEvent(payload: unknown): HookEventInterpretation;
+  /** Creates the stateful interpreter of the terminal signals of one agent session. */
+  createTerminalSignalInterpreter(now: () => number): TerminalSignalInterpreter;
 }
 
-/** Raw signal from the PTY, forwarded by the TerminalService. */
+/** One per agent session: remembers earlier signals, e.g. a key press (ADR 0005). */
+interface TerminalSignalInterpreter {
+  /** Translates a terminal signal into a status event, e.g. an interrupt, or null. */
+  interpret(signal: TerminalSignal, currentStatus: AgentSessionStatus | null): AgentStatusEvent | null;
+}
+
+/** Raw signal from the PTY, forwarded by the TerminalService; delivered synchronously, so the
+ * interpreter's clock dates it. */
 type TerminalSignal =
-  | { kind: 'input'; data: string; at: number }
-  | { kind: 'title'; title: string; at: number };
+  | { kind: 'input'; data: string }
+  | { kind: 'title'; title: string };
 ```
+
+Der Interpreter ist zustandsbehaftet und entsteht pro Agent-Session, weil der Abbruch aus zwei Signalen besteht: erst der Tastendruck, dann der Titel. Die Uhr kommt als Parameter, damit Tests das 5-s-Fenster ohne Warten prüfen können.
 
 ## 5. Abläufe
 
@@ -331,14 +349,14 @@ Die HTTP-Konfiguration gilt für: `UserPromptSubmit`, `PreToolUse`, `PostToolUse
 ## 7. MVP-Umfang
 
 **Drin**
-- [ ] Projekte hinzufügen und entfernen, Einstellungen pro Projekt (Präfix, Default-Agent-Typ, Setup-Skript)
+- [x] Projekte hinzufügen und entfernen, Einstellungen pro Projekt (Präfix, Default-Agent-Typ, Setup-Skript)
 - [ ] Task anlegen (Worktree + Branch), Setup-Skript ausführen
-- [ ] Agent-Session mit Claude Code starten, optional mit Start-Prompt
-- [ ] Status per Hooks, Statusregeln inklusive Subagent-Zähler und Abbruch-Erkennung über den Terminal-Titel
+- [x] Agent-Session mit Claude Code starten, optional mit Start-Prompt
+- [x] Status per Hooks, Statusregeln inklusive Subagent-Zähler und Abbruch-Erkennung über den Terminal-Titel
 - [ ] Sidebar mit Status, Subagent-Zähler und Anzahl geänderter Dateien
-- [ ] Task-Ansicht mit Tabs (Agent-Session + Terminals)
-- [ ] Terminal-Schrift einstellbar (Familie und Größe, z. B. für Nerd Fonts in Prompt-Themes)
-- [ ] Dark Mode: Darstellung System, Hell oder Dunkel, Default folgt Windows
+- [x] Task-Ansicht mit Tabs (Agent-Session + Terminals)
+- [x] Terminal-Schrift einstellbar (Familie und Größe, z. B. für Nerd Fonts in Prompt-Themes)
+- [x] Dark Mode: Darstellung System, Hell oder Dunkel, Default folgt Windows
 - [ ] Toast-Notifications
 - [ ] Task entfernen mit sicherer Branch-Löschung
 - [ ] Persistenz und „Fortsetzen“ per `--resume`
@@ -363,7 +381,7 @@ Die HTTP-Konfiguration gilt für: `UserPromptSubmit`, `PreToolUse`, `PostToolUse
 6. Button „Pushen und PR erstellen“ (GitHub bzw. Azure DevOps)
 7. Freigaben direkt aus der Oberfläche beantworten (`PermissionRequest` offen halten)
 8. Feedback-Schleife: Zeilen-Kommentare als Prompt an die Agent-Session
-9. Aktivitätsmeldungen per OSC 7501 (Claudes Anfrage `7501;?` beantworten) als präzisere Abbruch-Erkennung, siehe [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)
+9. Aktivitätsmeldungen per OSC 7501 (Claudes Anfrage `7501;?` beantworten) als präzisere Abbruch-Erkennung, auch für den Abbruch aus **Wartet** (Abschnitt 3, Regel 4), siehe [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)
 
 ## 9. Im Prototyp zu prüfen
 
@@ -385,5 +403,5 @@ Zusätzlich gefunden: `SessionStart` unterstützt keine HTTP-Hooks (deshalb ein 
 - **Eigenes Git-Repository** (Name: **Argus**, Repo `argus`)
 - Repo: https://github.com/viper1979/argus
 - **Glossar und ADRs leben ab jetzt im Repo** (`GLOSSARY.md`, `docs/adr/`). Sie sind die maßgebliche Quelle.
-- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`, `interpretTerminalSignal`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
+- Es gelten die allgemeinen Coding-Guidelines: Code auf Englisch, Doc-Comments, Unit-Tests (AAA-Muster) für Geschäftslogik. Zuerst testen: Statusregeln (`StatusTracker`, `interpretHookEvent`, `TerminalSignalInterpreter`), Pfad- und Namensbildung, Branch-Lösch-Entscheidung.
 - Reihenfolge: **Spike (Abschnitt 9, erledigt) → Grundgerüst Electron → Projekte und Tasks → Terminals → Hooks und Status → Entfernen → Persistenz und Fortsetzen**

@@ -1,6 +1,6 @@
 import { useStore } from 'zustand';
 import { createStore, type StoreApi } from 'zustand/vanilla';
-import type { StartAgentSessionResult } from '@shared/domain/agent-session';
+import type { StartAgentSessionResult, TaskAgentSessionStatus } from '@shared/domain/agent-session';
 
 /**
  * What a terminal tab shows (glossary: Terminal-Tab): a plain terminal, or the agent session of
@@ -38,12 +38,34 @@ export interface TaskViewState {
   readonly lastTabNumberByTask: Readonly<Record<string, number>>;
   /** Why the agent session of a task could not be started; shown in its task view. */
   readonly agentSessionFailureByTask: Readonly<Record<string, AgentSessionStartFailure>>;
+  /** Latest status of the agent session per task id; missing until its first status. */
+  readonly agentSessionStatusByTask: Readonly<Record<string, TaskAgentSessionStatus>>;
 
   /**
    * Shows a task in the main area. Terminals of the previous task keep running.
    * @param taskId The task to show.
    */
   readonly selectTask: (taskId: string) => void;
+
+  /**
+   * Opens a task from the sidebar. If its agent session waits for the user, its tab is shown
+   * right away, since that is where permissions and questions are answered (concept 5.4).
+   * @param taskId The task to show.
+   */
+  readonly openTask: (taskId: string) => void;
+
+  /**
+   * Takes over a status the main process reported; it replaces the earlier one of the task.
+   * @param status Status of an agent session and its task.
+   */
+  readonly applyAgentSessionStatus: (status: TaskAgentSessionStatus) => void;
+
+  /**
+   * Takes over the statuses listed at (re)load. Tasks that already got a status keep it: a
+   * `statusChanged` event may overtake the slower list and is the newer one.
+   * @param statuses Current status of every agent session.
+   */
+  readonly loadAgentSessionStatuses: (statuses: readonly TaskAgentSessionStatus[]) => void;
 
   /**
    * Adds the tab of a freshly opened terminal and shows it.
@@ -100,9 +122,45 @@ export function createTaskViewStore(): TaskViewStore {
     activeTerminalByTask: {},
     lastTabNumberByTask: {},
     agentSessionFailureByTask: {},
+    agentSessionStatusByTask: {},
 
     selectTask: (taskId) => {
       set({ selectedTaskId: taskId });
+    },
+
+    openTask: (taskId) => {
+      set((state) => {
+        const agentSessionTab = state.terminalsByTask[taskId]?.find(
+          (tab) => tab.kind === 'agent-session',
+        );
+        const isWaiting = state.agentSessionStatusByTask[taskId]?.status === 'waiting';
+        if (!isWaiting || !agentSessionTab) {
+          return { selectedTaskId: taskId };
+        }
+        return {
+          selectedTaskId: taskId,
+          activeTerminalByTask: {
+            ...state.activeTerminalByTask,
+            [taskId]: agentSessionTab.terminalId,
+          },
+        };
+      });
+    },
+
+    applyAgentSessionStatus: (status) => {
+      set((state) => ({
+        agentSessionStatusByTask: { ...state.agentSessionStatusByTask, [status.taskId]: status },
+      }));
+    },
+
+    loadAgentSessionStatuses: (statuses) => {
+      set((state) => {
+        const listedByTask = Object.fromEntries(statuses.map((status) => [status.taskId, status]));
+        // Spread last, so statuses from events win over the listed ones.
+        return {
+          agentSessionStatusByTask: { ...listedByTask, ...state.agentSessionStatusByTask },
+        };
+      });
     },
 
     addTerminal: (taskId, terminalId) => {

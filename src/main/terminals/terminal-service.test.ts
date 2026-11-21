@@ -11,6 +11,7 @@ import {
   type TerminalLaunch,
   type TerminalService,
 } from './terminal-service';
+import type { TerminalSignal } from './terminal-signal';
 import { FakePtySpawner } from './testing/fake-pty';
 import { createFakeLogger } from '../logging/testing/fake-logger';
 
@@ -352,6 +353,71 @@ describe('TerminalService', () => {
       // Assert
       expect(spawner.processAt(0).resizes).toEqual([]);
       expect(spawner.processAt(1).resizes).toEqual([{ cols: 80, rows: 24 }]);
+    });
+  });
+
+  describe('signals', () => {
+    /**
+     * Builds a launch that records the terminal signals it receives.
+     * @param onSignal Receiver of the signals.
+     * @returns The launch.
+     */
+    function launchWithSignals(onSignal: (signal: TerminalSignal) => void): TerminalLaunch {
+      return { startCommand: 'claude', addVariables: {}, removeVariable: () => false, onSignal };
+    }
+
+    it('write_ToTerminalWithSignalReceiver_ForwardsInputAsSignalAndToPty', async () => {
+      // Arrange
+      const onSignal = vi.fn();
+      await terminalService.open(
+        { taskId: LOGIN_TASK.id, ...INITIAL_SIZE },
+        launchWithSignals(onSignal),
+      );
+
+      // Act: Escape, as xterm.js sends it (ADR 0005)
+      terminalService.write(TERMINAL_ID, '\x1b');
+
+      // Assert
+      expect(onSignal).toHaveBeenCalledExactlyOnceWith({ kind: 'input', data: '\x1b' });
+      expect(spawner.processAt(0).writes).toEqual(['\x1b']);
+    });
+
+    it('output_WithTitleAcrossChunks_ForwardsTitleAsSignalAndOutputUnchanged', async () => {
+      // Arrange
+      const onSignal = vi.fn();
+      await terminalService.open(
+        { taskId: LOGIN_TASK.id, ...INITIAL_SIZE },
+        launchWithSignals(onSignal),
+      );
+      const shell = spawner.processAt(0);
+
+      // Act: Claude's idle title (ADR 0005), split like ConPTY may split it
+      shell.emitData('\x1b]0;✳ Cla');
+      shell.emitData('ude Code\x07');
+
+      // Assert
+      expect(onSignal).toHaveBeenCalledExactlyOnceWith({ kind: 'title', title: '✳ Claude Code' });
+      expect(outputEvent.mock.calls).toEqual([
+        [TERMINAL_ID, '\x1b]0;✳ Cla'],
+        [TERMINAL_ID, 'ude Code\x07'],
+      ]);
+    });
+
+    it('signals_OfOtherTerminalWithoutReceiver_DoNotReachTheAgentSession', async () => {
+      // Arrange: the agent session terminal plus an ordinary terminal of the same task
+      const onSignal = vi.fn();
+      await terminalService.open(
+        { taskId: LOGIN_TASK.id, ...INITIAL_SIZE },
+        launchWithSignals(onSignal),
+      );
+      await terminalService.open({ taskId: LOGIN_TASK.id, ...INITIAL_SIZE });
+
+      // Act: Ctrl+C and a title in the ordinary terminal
+      terminalService.write(SECOND_TERMINAL_ID, '\x03');
+      spawner.processAt(1).emitData('\x1b]0;✳ Claude Code\x07');
+
+      // Assert
+      expect(onSignal).not.toHaveBeenCalled();
     });
   });
 });
