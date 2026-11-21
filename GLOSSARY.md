@@ -42,6 +42,10 @@ _Avoid_: Session-ID, Agent-Session-ID (das ist die ID, die Argus vergibt)
 Ein Agent, den eine Agent-Session selbst startet. Argus startet oder steuert ihn nicht, er zählt ihn nur. Claude-interne Hilfsagents, die ohne `SubagentStart` enden, sind keine Subagents.
 _Avoid_: Worker, Child-Agent
 
+**Terminal-Signal**:
+Ein Tastendruck oder eine Titeländerung in der PowerShell einer Agent-Session, die Argus beobachtet, um den Status abzuleiten, z. B. den Abbruch per Escape. Anders als ein Hook-Event meldet nicht der Agent es selbst, Argus liest es am Terminal ab.
+_Avoid_: Terminal-Event, Tastatur-Event
+
 ## Status einer Agent-Session
 
 **Arbeitet**:

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import {
   startAgentSessionRequestSchema,
   startAgentSessionResultSchema,
+  taskAgentSessionStatusSchema,
 } from '../domain/agent-session';
 import {
   addProjectResultSchema,
@@ -106,6 +107,14 @@ export const ipcContract = {
       request: startAgentSessionRequestSchema.strict(),
       response: startAgentSessionResultSchema,
     },
+    /**
+     * Current status of every agent session that has one, for a renderer that (re)loads and
+     * missed earlier `statusChanged` events.
+     */
+    listStatuses: {
+      request: z.object({}).strict(),
+      response: z.object({ statuses: z.array(taskAgentSessionStatusSchema) }),
+    },
   },
   settings: {
     get: {
@@ -128,6 +137,10 @@ export const ipcEventContract = {
   terminal: {
     output: terminalOutputEventSchema,
     exit: terminalExitEventSchema,
+  },
+  agentSession: {
+    /** Status or subagent count of an agent session changed (concept 3). */
+    statusChanged: taskAgentSessionStatusSchema,
   },
 } as const satisfies IpcEventContractShape;
 

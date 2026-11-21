@@ -17,6 +17,8 @@ export function createFakeAgentTypeAdapter(
     buildStartCommand: ({ hookSettingsPath, startPrompt }) =>
       `fake-agent ${hookSettingsPath} ${startPrompt ?? '<none>'}`,
     shouldRemoveInheritedVariable: () => false,
+    interpretHookEvent: () => ({ ok: true, event: null }),
+    createTerminalSignalInterpreter: () => ({ interpret: () => null }),
     ...overrides,
   };
 }

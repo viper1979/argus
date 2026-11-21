@@ -1,0 +1,49 @@
+{
+  "source": "Recorded in spike #1 (Claude Code 2.1.329, Windows 10, 2026-11-20); sanitized through an allowlist of fields, ids replaced.",
+  "description": "Escape after a tool finished: no hook event for the interrupt, helper SubagentStop after each Stop, SessionEnd reason other when the PTY ended. Recorded before the spike had a SessionStart hook, so none is included.",
+  "events": [
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "PreToolUse",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tool_name": "PowerShell"
+    },
+    {
+      "hook_event_name": "PostToolUse",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tool_name": "PowerShell"
+    },
+    {
+      "hook_event_name": "Stop",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "SubagentStop",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "agent_id": "a0000000000000001",
+      "agent_type": ""
+    },
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "Stop",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "SubagentStop",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "agent_id": "a0000000000000002",
+      "agent_type": ""
+    },
+    {
+      "hook_event_name": "SessionEnd",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "reason": "other"
+    }
+  ]
+}

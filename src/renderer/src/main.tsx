@@ -1,7 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { toTerminalFont } from '@shared/domain/terminal-font';
+import { startAgentSessionStatusListening } from './agent-sessions/agent-session-status-events';
 import { App } from './app';
+import { taskViewStore } from './stores/task-view-store';
 import { startTerminalEventListening } from './terminals/terminal-events';
 import { terminalColorSchemeFor } from './terminals/terminal-color-schemes';
 import { applyTerminalColorScheme, applyTerminalFont } from './terminals/terminal-views';
@@ -10,6 +12,14 @@ import './styles.css';
 
 // Subscribe before anything renders, so no terminal output can arrive unheard.
 startTerminalEventListening();
+
+// Statuses of agent sessions: live changes plus those a reload missed.
+startAgentSessionStatusListening(window.argus.agentSession, taskViewStore).catch(
+  (error: unknown) => {
+    // Live changes still arrive; only statuses from before this load are missing.
+    console.error('Could not load agent session statuses', error);
+  },
+);
 
 /** Media query that reflects the mode the main process resolved (#22). */
 const DARK_COLOR_SCHEME_QUERY = '(prefers-color-scheme: dark)';

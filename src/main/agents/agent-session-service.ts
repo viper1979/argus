@@ -7,6 +7,7 @@ import type { AgentType } from '@shared/domain/project';
 import type { AgentHooks, AvailableAgentHooks } from '../hooks/start-agent-hooks';
 import type { Logger } from '../logging/logger';
 import type { AppStateHolder } from '../persistence/app-state-holder';
+import type { StatusTracker } from '../status/status-tracker';
 import type { TerminalService } from '../terminals/terminal-service';
 import {
   AGENT_SESSION_ID_VARIABLE,
@@ -37,6 +38,22 @@ export interface AgentSessionService {
    * @returns `true` while the agent session's PTY lives.
    */
   isAgentSessionTerminal(terminalId: string): boolean;
+
+  /**
+   * Stores the conversation id the agent reported (glossary: Konversations-ID); every later
+   * report overwrites it, e.g. after a clear (concept 5.3, step 6). It is needed to resume.
+   * @param agentSessionId The agent session the hook event belongs to.
+   * @param conversationId The id the agent CLI reported.
+   */
+  recordConversationId(agentSessionId: string, conversationId: string): Promise<void>;
+
+  /**
+   * Finds the task of an agent session started during this app run, also after its terminal
+   * ended: its last status ("Beendet") still has to reach the task in the sidebar.
+   * @param agentSessionId The agent session, e.g. from the header of a hook request.
+   * @returns The task id, or `null` if no agent session with this id was started in this run.
+   */
+  findTaskId(agentSessionId: string): string | null;
 }
 
 /** Collaborators of the agent session service; `generateId` makes ids deterministic in tests. */
@@ -48,6 +65,13 @@ export interface AgentSessionServiceOptions {
   /** Outcome of the hook setup at app start. */
   readonly hooks: AgentHooks;
   readonly generateId: () => string;
+  /**
+   * Receives what terminal signals and the end of the terminal mean for the status, and knows
+   * the current status the terminal signal rules depend on (ADR 0005).
+   */
+  readonly statusTracker: Pick<StatusTracker, 'apply' | 'getStatus'>;
+  /** Clock in milliseconds that dates terminal signals; injected for tests. */
+  readonly now: () => number;
   readonly logger: Logger;
 }
 
@@ -68,6 +92,13 @@ export function createAgentSessionService(
    * under way. "Running" means its PTY lives; a task without entry can start one.
    */
   const agentSessionTerminalByTask = new Map<string, string | typeof START_PENDING>();
+  /**
+   * Task per agent session started in this app run; kept after the terminal ended. Only these
+   * can send hook events: the hook token is new with every app start.
+   */
+  const taskByAgentSession = new Map<string, string>();
+  /** Agent session per terminal while its PTY lives; its end ends the agent session. */
+  const agentSessionByTerminal = new Map<string, string>();
 
   return {
     start: async (request) => {
@@ -92,12 +123,21 @@ export function createAgentSessionService(
       }
       if (result.ok) {
         agentSessionTerminalByTask.set(request.taskId, result.terminalId);
+        // In time for the first hook: the agent CLI needs seconds to boot and run SessionStart.
+        taskByAgentSession.set(result.agentSessionId, request.taskId);
+        agentSessionByTerminal.set(result.terminalId, result.agentSessionId);
       } else {
         agentSessionTerminalByTask.delete(request.taskId);
       }
       return result;
     },
     handleTerminalExit: (terminalId) => {
+      const agentSessionId = agentSessionByTerminal.get(terminalId);
+      if (agentSessionId !== undefined) {
+        agentSessionByTerminal.delete(terminalId);
+        // Also covers `exit` in the PowerShell and a crashed agent that sent no SessionEnd.
+        options.statusTracker.apply(agentSessionId, { kind: 'session-ended' });
+      }
       for (const [taskId, agentSessionTerminal] of agentSessionTerminalByTask) {
         if (agentSessionTerminal === terminalId) {
           agentSessionTerminalByTask.delete(taskId);
@@ -106,6 +146,21 @@ export function createAgentSessionService(
     },
     isAgentSessionTerminal: (terminalId) =>
       [...agentSessionTerminalByTask.values()].includes(terminalId),
+    recordConversationId: async (agentSessionId, conversationId) => {
+      const state = await options.stateHolder.read();
+      if (!state.agentSessions.some((saved) => saved.id === agentSessionId)) {
+        // The header comes from a process outside Argus' control; never write for it.
+        logger.warn('Conversation id for unknown agent session ignored', { agentSessionId });
+        return;
+      }
+      await options.stateHolder.update((current) => ({
+        ...current,
+        agentSessions: current.agentSessions.map((saved) =>
+          saved.id === agentSessionId ? { ...saved, conversationId } : saved,
+        ),
+      }));
+    },
+    findTaskId: (agentSessionId) => taskByAgentSession.get(agentSessionId) ?? null,
   };
 }
 
@@ -121,7 +176,7 @@ async function launchAgentSession(
   hooks: AvailableAgentHooks,
   { taskId, cols, rows }: StartAgentSessionRequest,
 ): Promise<StartAgentSessionResult> {
-  const { stateHolder, terminalService, adapters, generateId } = options;
+  const { stateHolder, terminalService, adapters, generateId, statusTracker, now } = options;
   const state = await stateHolder.read();
   const task = state.tasks.find((candidate) => candidate.id === taskId);
   if (!task) {
@@ -142,6 +197,8 @@ async function launchAgentSession(
     ...current,
     agentSessions: [...current.agentSessions, agentSession],
   }));
+  // One per agent session: it remembers earlier signals, e.g. a key press (ADR 0005).
+  const signalInterpreter = adapter.createTerminalSignalInterpreter(now);
   const opened = await terminalService.open(
     { taskId, cols, rows },
     {
@@ -155,6 +212,14 @@ async function launchAgentSession(
       },
       // Which inherited variables to drop is agent knowledge; the adapter decides directly.
       removeVariable: adapter.shouldRemoveInheritedVariable.bind(adapter),
+      onSignal: (signal) => {
+        // The status at the time of the signal; the rules depend on it, e.g. only "Arbeitet"
+        // can be interrupted.
+        const event = signalInterpreter.interpret(signal, statusTracker.getStatus(agentSessionId));
+        if (event !== null) {
+          statusTracker.apply(agentSessionId, event);
+        }
+      },
     },
   );
   if (!opened.ok) {

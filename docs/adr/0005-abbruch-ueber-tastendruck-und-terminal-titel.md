@@ -26,3 +26,11 @@ Erscheint innerhalb eines kurzen Fensters (5 s) nach dem Tastendruck der Leerlau
 - Gemessen: Der Leerlauf-Titel kam 24–77 ms nach dem Tastendruck, in der Denkphase genauso wie während eines laufenden Tools. Das sind Einzelmessungen pro Fall.
 - Die Glyphen sind Claude-spezifisch. Erkennung und Fenster leben deshalb im `AgentTypeAdapter` für Claude Code. Der `TerminalService` liefert nur Terminal-Signale (Eingabe, Titel).
 - Ändert Claude Code die Titel-Glyphen, fällt die Erkennung still aus, und der Status bleibt bis zum nächsten Hook-Event auf **Arbeitet**. Die Glyphen gehören deshalb in eine Konstante mit Test.
+
+## Nachtrag: Smoke-Test zu #8 (2026-11-21)
+
+- **Umsetzung:** Der `AgentTypeAdapter` erzeugt pro Agent-Session einen Signal-Interpreter mit injizierter Uhr (Konzept 4). Ein Tastendruck zählt nur, wenn die Eingabe *genau* `\x1b`, `\x1b[27u` oder `\x03` ist. Pfeiltasten beginnen ebenfalls mit ESC und dürfen nicht zählen. Spinner-Titel lassen den gemerkten Tastendruck stehen, weil ein Spinner-Tick vor dem Leerlauf-Titel kommen kann. Ein zweiter Tastendruck startet das Fenster neu.
+- **Bestätigt in Argus:** Escape während **Arbeitet** führte nach 78 ms zu **Bereit**. ConPTY reicht den Titel (OSC 0) also bis zu Argus durch. Der `TerminalService` wertet neben OSC 0 auch OSC 2 aus, weil beide den Fenstertitel setzen.
+- **Grenze: Abbruch aus „Wartet“.** Escape in einer Freigabe-Abfrage oder bei `AskUserQuestion` beendet den Turn, ebenfalls ohne Hook-Event. Claude setzt `✳` aber schon, sobald die Abfrage erscheint (gemessen 1,2–1,5 s vor dem Escape), danach kommt kein neuer Titel. Das Signal „Tastendruck, dann `✳`“ entsteht dort also nie, und Argus erkennt den Abbruch nicht. **Wartet** bleibt bis zum nächsten Prompt stehen.
+  - Verworfen: Escape bei **Wartet** allein als Abbruch werten. Ein Escape, das die Abfrage nicht beendet (z. B. aus dem Eingabefeld „Tab to amend“ heraus), würde fälschlich **Bereit** zeigen.
+  - Die Anfrage `OSC 7501;?` aus dem Backlog könnte diese Lücke schließen.

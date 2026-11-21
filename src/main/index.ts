@@ -8,6 +8,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOption
 import { createAgentSessionService } from './agents/agent-session-service';
 import { AGENT_TYPE_ADAPTERS } from './agents/agent-type-registry';
 import { createGitClient } from './git/git-client';
+import { createHookEventHandler } from './hooks/hook-event-handler';
 import { startHookServer } from './hooks/hook-server';
 import { startAgentHooks } from './hooks/start-agent-hooks';
 import { createProcessGitRunner } from './git/process-git-runner';
@@ -20,6 +21,8 @@ import { createAppStateHolder } from './persistence/app-state-holder';
 import { createStateStore } from './persistence/state-store';
 import { createProjectService } from './projects/project-service';
 import { createSettingsService } from './settings/settings-service';
+import { createStatusTracker } from './status/status-tracker';
+import { toTaskAgentSessionStatus } from './status/task-agent-session-status';
 import { createTaskService } from './tasks/task-service';
 import { createNodePtySpawner } from './terminals/node-pty-spawner';
 import { closeTerminalsBeforeQuit } from './terminals/close-terminals-before-quit';
@@ -199,6 +202,24 @@ async function startApp(): Promise<void> {
     () => mainWindowReference?.webContents ?? null,
   );
 
+  // Statuses only change after an agent session started, which needs IPC, so
+  // agentSessionService is initialised by then.
+  const statusLogger = createConsoleLogger('status');
+  const statusTracker = createStatusTracker({
+    onStatusChanged: (snapshot) => {
+      const status = toTaskAgentSessionStatus(snapshot, agentSessionService);
+      if (status === null) {
+        // Not expected: only agent sessions of this app run reach the tracker.
+        statusLogger.warn('Status of agent session without task not sent', {
+          agentSessionId: snapshot.agentSessionId,
+        });
+        return;
+      }
+      ipcEvents.agentSession.statusChanged(status);
+    },
+    logger: statusLogger,
+  });
+
   // Before the window: the hook settings file must carry the port of this app start before any
   // agent session can be started (concept 5.3). A failure is logged and only blocks agent
   // sessions, not the app.
@@ -209,13 +230,15 @@ async function startApp(): Promise<void> {
     startHookServer,
     writeFile: writeHookSettingsFile,
     generateToken: () => randomBytes(HOOK_TOKEN_BYTES).toString('hex'),
-    onHookEvent: ({ agentType, agentSessionId, body }) => {
-      // Only logged until #8 interprets the events. Never the body: it holds prompts and
-      // tool output.
-      hookLogger.info('Hook event received', {
-        agentType,
-        agentSessionId,
-        bodyLength: body.length,
+    onHookEvent: (hookEvent) => {
+      // Only agent sessions of this app run know the token, so handleHookEvent is initialised
+      // by then. It logs its own failures; this only guards against bugs.
+      handleHookEvent(hookEvent).catch((error: unknown) => {
+        hookLogger.error('Hook event could not be handled', {
+          agentType: hookEvent.agentType,
+          agentSessionId: hookEvent.agentSessionId,
+          error,
+        });
       });
     },
     logger: hookLogger,
@@ -246,7 +269,15 @@ async function startApp(): Promise<void> {
     adapters: AGENT_TYPE_ADAPTERS,
     hooks: agentHooks,
     generateId: randomUUID,
+    statusTracker,
+    now: Date.now,
     logger: createConsoleLogger('agent-sessions'),
+  });
+  const handleHookEvent = createHookEventHandler({
+    adapters: AGENT_TYPE_ADAPTERS,
+    agentSessionService,
+    statusTracker,
+    logger: hookLogger,
   });
   closeTerminalsBeforeQuit(
     {
@@ -270,6 +301,7 @@ async function startApp(): Promise<void> {
       terminalService,
       agentSessionService,
       settingsService,
+      statusTracker,
       pickFolder,
     }),
     logger: createConsoleLogger('ipc'),

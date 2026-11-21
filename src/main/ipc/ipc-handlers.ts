@@ -4,6 +4,8 @@ import { app } from 'electron';
 import type { AgentSessionService } from '../agents/agent-session-service';
 import type { ProjectService } from '../projects/project-service';
 import type { SettingsService } from '../settings/settings-service';
+import type { StatusTracker } from '../status/status-tracker';
+import { toTaskAgentSessionStatus } from '../status/task-agent-session-status';
 import type { TaskService } from '../tasks/task-service';
 import type { TerminalService } from '../terminals/terminal-service';
 import { AgentSessionTerminalCloseError } from './agent-session-terminal-close-error';
@@ -15,6 +17,8 @@ export interface IpcHandlerDependencies {
   readonly terminalService: TerminalService;
   readonly agentSessionService: AgentSessionService;
   readonly settingsService: SettingsService;
+  /** Current status of every agent session (concept 4). */
+  readonly statusTracker: Pick<StatusTracker, 'getStatuses'>;
   /**
    * Shows the native folder picker.
    * @param title Title of the dialog.
@@ -35,6 +39,7 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
     terminalService,
     agentSessionService,
     settingsService,
+    statusTracker,
     pickFolder,
   } = dependencies;
 
@@ -80,6 +85,14 @@ export function createIpcHandlers(dependencies: IpcHandlerDependencies): IpcHand
     },
     agentSession: {
       start: (request) => agentSessionService.start(request),
+      listStatuses: () => ({
+        // An agent session without task could not be shown anywhere; the hook wiring already
+        // ignores those, so this only guards the contract.
+        statuses: statusTracker.getStatuses().flatMap((snapshot) => {
+          const status = toTaskAgentSessionStatus(snapshot, agentSessionService);
+          return status === null ? [] : [status];
+        }),
+      }),
     },
     settings: {
       get: () => settingsService.get(),

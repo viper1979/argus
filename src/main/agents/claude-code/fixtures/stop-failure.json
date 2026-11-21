@@ -1,0 +1,28 @@
+{
+  "source": "HAND-BUILT, never recorded; fields checked against https://code.claude.com/docs/en/hooks on 2026-11-21. Replace by a recorded run when possible.",
+  "description": "The turn ends with an API error; the next prompt succeeds.",
+  "events": [
+    {
+      "hook_event_name": "SessionStart",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "source": "startup"
+    },
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "StopFailure",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "error": "rate_limit"
+    },
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "Stop",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

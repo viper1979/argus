@@ -17,6 +17,32 @@ export const agentSessionSchema = z.object({
 /** A conversation of an agent type within a task (glossary: Agent-Session). */
 export type AgentSession = z.infer<typeof agentSessionSchema>;
 
+/**
+ * Status of an agent session (glossary, concept 3): Arbeitet, Wartet, Bereit, Fehler, Beendet.
+ */
+export const agentSessionStatusSchema = z.enum(['working', 'waiting', 'ready', 'failed', 'ended']);
+
+/** Status of an agent session (glossary, concept 3). */
+export type AgentSessionStatus = z.infer<typeof agentSessionStatusSchema>;
+
+/** What the sidebar shows of one agent session: its status and how many subagents run. */
+export const agentSessionStatusSnapshotSchema = z.object({
+  agentSessionId: z.uuid(),
+  status: agentSessionStatusSchema,
+  subagentCount: z.number().int().nonnegative(),
+});
+
+/** What the sidebar shows of one agent session. */
+export type AgentSessionStatusSnapshot = z.infer<typeof agentSessionStatusSnapshotSchema>;
+
+/** A snapshot with the task it belongs to, since the sidebar lists tasks (concept 6). */
+export const taskAgentSessionStatusSchema = agentSessionStatusSnapshotSchema.extend({
+  taskId: z.uuid(),
+});
+
+/** A snapshot with the task it belongs to. */
+export type TaskAgentSessionStatus = z.infer<typeof taskAgentSessionStatusSchema>;
+
 /** Starts an agent session in the first terminal tab of a task. */
 export const startAgentSessionRequestSchema = terminalSizeSchema.extend({
   taskId: z.uuid(),

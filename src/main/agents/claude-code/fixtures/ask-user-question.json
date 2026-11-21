@@ -1,0 +1,29 @@
+{
+  "source": "HAND-BUILT, never recorded; fields checked against https://code.claude.com/docs/en/hooks on 2026-11-21. Replace by a recorded run when possible.",
+  "description": "The main agent asks the user a question via the AskUserQuestion tool; it arrives as PreToolUse.",
+  "events": [
+    {
+      "hook_event_name": "SessionStart",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "source": "startup"
+    },
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "PreToolUse",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tool_name": "AskUserQuestion"
+    },
+    {
+      "hook_event_name": "PostToolUse",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "tool_name": "AskUserQuestion"
+    },
+    {
+      "hook_event_name": "Stop",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    }
+  ]
+}

@@ -1,0 +1,44 @@
+{
+  "source": "Recorded in spike #1 (Claude Code 2.1.329, Windows 10, 2026-11-20); sanitized through an allowlist of fields, ids replaced.",
+  "description": "SessionStart on startup, /clear (new session_id) and --resume; one prompt before the clear.",
+  "events": [
+    {
+      "hook_event_name": "SessionStart",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "source": "startup"
+    },
+    {
+      "hook_event_name": "UserPromptSubmit",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "Stop",
+      "session_id": "00000000-0000-4000-8000-000000000001"
+    },
+    {
+      "hook_event_name": "SessionEnd",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "reason": "clear"
+    },
+    {
+      "hook_event_name": "SessionStart",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "source": "clear"
+    },
+    {
+      "hook_event_name": "SessionEnd",
+      "session_id": "00000000-0000-4000-8000-000000000002",
+      "reason": "prompt_input_exit"
+    },
+    {
+      "hook_event_name": "SessionStart",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "source": "resume"
+    },
+    {
+      "hook_event_name": "SessionEnd",
+      "session_id": "00000000-0000-4000-8000-000000000001",
+      "reason": "prompt_input_exit"
+    }
+  ]
+}
