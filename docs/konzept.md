@@ -381,7 +381,7 @@ Die HTTP-Konfiguration gilt für: `UserPromptSubmit`, `PreToolUse`, `PostToolUse
 6. Button „Pushen und PR erstellen“ (GitHub bzw. Azure DevOps)
 7. Freigaben direkt aus der Oberfläche beantworten (`PermissionRequest` offen halten)
 8. Feedback-Schleife: Zeilen-Kommentare als Prompt an die Agent-Session
-9. Aktivitätsmeldungen per OSC 7501 (Claudes Anfrage `7501;?` beantworten) als präzisere Abbruch-Erkennung, auch für den Abbruch aus **Wartet** (Abschnitt 3, Regel 4), siehe [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md)
+9. Aktivitätsmeldungen per OSC 7501 (Claudes Anfrage `7501;?` beantworten) als präzisere Abbruch-Erkennung, auch für den Abbruch aus **Wartet** (Abschnitt 3, Regel 4), siehe [ADR 0005](adr/0005-abbruch-ueber-tastendruck-und-terminal-titel.md) und Issue [#31](https://github.com/viper1979/argus/issues/31)
 
 ## 9. Im Prototyp zu prüfen
 
